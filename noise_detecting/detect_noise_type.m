@@ -1,6 +1,4 @@
 function out = detect_noise_type(imgPath)
-%DETECT_NOISE_TYPE Detect Gaussian or JPEG artifacts. Compatible with Python caller.
-
     try
         % -----------------------------------------------------------
         % READ IMAGE
@@ -12,6 +10,8 @@ function out = detect_noise_type(imgPath)
             img = rgb2gray(img);
         end
         img = im2double(img);
+
+        [imgH, imgW] = size(img);
 
         % ===========================================================
         % 1. GAUSSIAN NOISE DETECTION
@@ -34,9 +34,7 @@ function out = detect_noise_type(imgPath)
         % ===========================================================
         % 2. JPEG ARTIFACT DETECTION
         % ===========================================================
-        % JPEG introduces block boundaries at multiples of 8
 
-        % ---------- (A) BLOCKINESS (we keep your original idea) ----------
         rows = 8:8:size(img,1)-1;
         cols = 8:8:size(img,2)-1;
 
@@ -51,7 +49,7 @@ function out = detect_noise_type(imgPath)
 
         blockiness_ratio = blockBoundary / internal;
 
-        % ---------- (B) DCT quantization detection ----------
+        % ---------- DCT quantization detection ----------
         blockSize = 8;
         fun = @(b) dct2(b.data);
 
@@ -60,27 +58,34 @@ function out = detect_noise_type(imgPath)
         % Extract AC high-frequency region
         HF_AC = abs(dctImg(5:end,5:end));
 
-        % Quantization leaves *strong peaks* at multiples of quant step
-        % We look at histogram "spikiness"
+        % Look for spikes in the histogram
         edges = linspace(0, max(HF_AC(:)), 80);
         hst = histcounts(HF_AC(:), edges);
 
         % Peakiness metric
         peakiness = max(hst) / mean(hst);
 
+        % Mean AC magnitude (avoid spurious peakiness when coefficients ~ 0)
+        mean_HF_AC = mean(HF_AC(:));
+
         % Empirical thresholds (tuned)
-        isJPEG_DCT = peakiness > 3.2;  % sensitive even at QF=70–90
+        % Require a larger mean AC magnitude to avoid
+        % misclassifying low-energy Poisson images as JPEG.
+        isJPEG_DCT = (peakiness > 3.2) && (mean_HF_AC > 5e-3);  % stricter guard
         isJPEG_Block = (blockiness_ratio > 1.25) && (blockBoundary > 0.010);
 
         isJPEG = isJPEG_DCT || isJPEG_Block;
 
+        jpeg_peakiness = peakiness; jpeg_blockiness_ratio = blockiness_ratio; 
+        jpeg_blockBoundary = blockBoundary; jpeg_mean_HF_AC = mean_HF_AC;
+
         % ===========================================================
-        % 3. SALT & PEPPER DETECTION (balanced, stable)
+        % 3. SALT & PEPPER DETECTION
         % ===========================================================
 
         medImg = medfilt2(img, [3 3]);
 
-        % 1) IMPULSE DEVIATION (moderate sensitivity)
+        % Moderate
         impulseMask = abs(img - medImg) > 0.25;
         impulseRatio = sum(impulseMask(:)) / numel(img);
 
@@ -91,9 +96,9 @@ function out = detect_noise_type(imgPath)
         % If S&P exists, median filtering reduces noise strongly → big residual drop
         medResidual = mean(abs(img(:) - medImg(:)));
 
-        % Residual of the high-frequency (Gaussian is smoother)
-        hf = img - imgaussfilt(img, 1);   % high-frequency component
-        medResidualHF = mean(abs(hf(:))); % now safe to index
+        % Residual of the high-frequency
+        hf = img - imgaussfilt(img, 1);  
+        medResidualHF = mean(abs(hf(:))); 
 
         % Ratio is strong for impulse noise
         impulsePeak = medResidualHF / (medResidual + 1e-8);
@@ -103,20 +108,101 @@ function out = detect_noise_type(imgPath)
         cond2 = extremeRatio > 0.003;      % ≥ 0.3% extreme pixels
         cond3 = impulsePeak > 2.0;         % big HF vs median difference
 
-        % Require at least TWO conditions to classify as S&P
+        % Require at least TWO conditions to classify as S&P (To make sure this doesn't get misclasify)
         isSaltPepper = (cond1 + cond2 + cond3) >= 2;
 
-        % Prevent JPEG or Gaussian misfiring when impulses exist
+        % Prevent JPEG or Gaussian misfiring when impulses exist (Doubly sure)
         if isSaltPepper
             isGaussian = false;
             isJPEG = false;
         end
+        
+        % ===========================================================
+        % 4. POISSON (SHOT) NOISE DETECTION
+        % ===========================================================
+        patchSize = 16;
+        funMean = @(b) mean(b.data(:));
+        funVar  = @(b) var(b.data(:));
+
+        % Compute block-wise mean and variance (each block filled with scalar)
+        meanBlocks = blockproc(img, [patchSize patchSize], funMean);
+        varBlocks  = blockproc(img, [patchSize patchSize], funVar);
+
+        % Sample one value per block (top-left of each block)
+        means = meanBlocks(1:patchSize:end, 1:patchSize:end);
+        vars  = varBlocks(1:patchSize:end, 1:patchSize:end);
+
+        means = means(:);
+        vars  = vars(:);
+
+        % Filter out invalid or very dark patches (where variance is tiny)
+        valid = isfinite(means) & isfinite(vars);
+        valid = valid & (means > 0.005);  % ignore very dark patches
+        means = means(valid);
+        vars  = vars(valid);
+
+        isPoisson = false;
+        if numel(means) >= 8
+            p = polyfit(means, vars, 1);
+            slope = p(1);
+            intercept = p(2);
+
+            yfit = polyval(p, means);
+            ssres = sum((vars - yfit).^2);
+            sstot = sum((vars - mean(vars)).^2) + eps;
+            r2 = 1 - ssres/sstot;
+
+            vmr = mean(vars ./ (means + 1e-8));
+
+            % Robust checks (scale-dependent):
+            slopePos = (slope > 1e-6);
+            slopeReasonable = (slope < 1e2); % prevent pathological slopes
+
+            meanVar = mean(vars) + 1e-12;
+            interceptRel = abs(intercept) / meanVar; % intercept relative to mean variance
+            interceptSmall = (interceptRel < 0.5); % intercept less than half of mean variance
+
+            residStd = std(vars - yfit);
+            residRel = residStd / (meanVar + 1e-12);
+
+            r2Good = (r2 > 0.18);
+            residReasonable = (residRel < 2.0);
+
+            isPoisson = slopePos && slopeReasonable && interceptSmall && r2Good && residReasonable;
+
+            est_peak = 1 / (slope + 1e-12);
+        else
+            est_peak = NaN;
+        end
+
+        % If Poisson is confidently detected, avoid marking as Gaussian/JPEG
+        if isPoisson
+            isGaussian = false;
+            isJPEG = false;
+        end
+
+        % Strong override: if high-frequency kurtosis is very large this
+        % typically indicates heavy-tailed shot noise — prefer Poisson
+        % even if a weak JPEG cue exists.
+        if (~isSaltPepper) && (hfKurt > 20) && (slope < -1e-6)
+            isPoisson = true; isGaussian = false; isJPEG = false; end
+
+        % ----------------------
+        % Fallback for weak Poisson signals
+        % If Poisson heuristic failed but the high-frequency kurtosis is
+        % extremely large (strong heavy tails) and no other noise was
+        % detected, assume Poisson. This is a conservative fallback.
+        if ~isPoisson && ~isSaltPepper && ~isJPEG && ~isGaussian && (hfKurt > 20) && (slope < -1e-6)
+            isPoisson = true; end
+        % end diagnostics
 
         % ===========================================================
         % FINAL DECISION
         % ===========================================================
         if isSaltPepper
             out = 'salt_pepper';
+        elseif isPoisson
+            out = 'poisson';
         elseif isGaussian
             out = 'gaussian';
         elseif isJPEG
