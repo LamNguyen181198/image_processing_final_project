@@ -1,107 +1,169 @@
-# MATLAB Noise Generation Project
+# MATLAB Noise Generation and Detection Project
 
-This project provides a **Python wrapper** to generate multiple noisy images using MATLAB. It supports Gaussian, salt & pepper, Poisson, speckle, uniform, and JPEG artifact noise types.
+This project provides a **complete workflow** for generating noisy images in MATLAB and detecting the type of noise using a hybrid MATLAB + Python pipeline.
+
+It now supports:
+
+### ✅ **Noise Generation (MATLAB)**
+
+* Gaussian noise
+* Salt & Pepper noise
+* Poisson (photon shot) noise
+* Speckle noise
+* Uniform noise
+* JPEG compression artifacts
+
+### ✅ **Noise Type Detection (MATLAB)**
+
+Supports classification of:
+
+* `gaussian`
+* `salt_pepper`
+* `jpeg_artifact`
+* `none`
+
+Detection uses:
+
+* High-frequency variance / kurtosis (Gaussian)
+* Blockiness + DCT peakiness (JPEG)
+* Robust 3-metric impulse detection (Salt & Pepper)
+
+### ✅ **Batch Testing + Visualization (Python)**
+
+Includes a Python script to:
+
+* Run MATLAB detection on every generated image
+* Extract ground-truth noise type from filenames
+* Produce a CSV report
+* Generate accuracy plots + confusion matrix
 
 ---
 
-## **Requirements**
+# 📦 Requirements
 
-* **MATLAB R2025b** (or compatible version)
-* **Image Processing Toolbox** (required for `im2double` and `im2uint8`)
-* Python 3.x
-* Packages: `argparse`, `pathlib`, `shutil`, `subprocess`, `sys` (all standard)
+## MATLAB
+
+* MATLAB R2022a or newer
+* **Image Processing Toolbox** (recommended)
+
+If you do *not* have IPT, you can replace `im2double` / `im2uint8` with manual scaling.
+
+## Python
+
+Requires:
+
+```
+pandas
+matplotlib
+seaborn
+```
+
+All other modules used are standard library.
 
 ---
 
-## **Installing Image Processing Toolbox**
+# 🚀 Running Noise Generation (MATLAB)
 
-### **1. Check if Toolbox is Installed**
+```
+generate_noisy_images('path/to/image.jpg', 'noisy_output', 5, 'all');
+```
 
-Open MATLAB and run:
+This generates noisy variants of the image and saves them into `noisy_output/`.
 
-```matlab
-ver
-license('test', 'Image_Toolbox')  % Returns 1 if installed, 0 otherwise
+Noise types available:
+
+```
+'all'
+'gaussian'
+'salt_pepper'
+'poisson'
+'speckle'
+'uniform'
+'jpeg_artifacts'
+```
+
+Generated filenames include metadata (e.g., `salt_pepper_03_density0.1829.png`).
+
+---
+
+# 🔍 Running Noise Detection (MATLAB)
+
+```
+out = detect_noise_type('noisy_output/salt_pepper_01_density0.12.png');
+```
+
+Returns one of:
+
+* `gaussian`
+* `salt_pepper`
+* `jpeg_artifact`
+* `none`
+
+This version includes:
+
+* Improved low-density salt-and-pepper detection
+* Multi-metric voting (impulse ratio + extreme pixels + residual ratio)
+* Protection against false JPEG/Gaussian triggers
+
+---
+
+# 🧪 Batch Testing (Python)
+
+Run:
+
+```
+python batch_test.py noisy_output
+```
+
+This will:
+
+* Run MATLAB detection for each PNG in the directory
+* Compare detected vs ground truth
+* Save `detection_results.csv`
+* Generate `detection_results.png` (accuracy plots + confusion matrix)
+
+---
+
+# 📊 Visualization Output
+
+The generated PNG includes:
+
+* Overall accuracy
+* Accuracy by noise type
+* Confusion matrix
+* Most common misclassifications
+
+Useful for debugging threshold selection.
+
+---
+
+# ⚠ Notes
+
+* JPEG artifact detection requires MATLAB’s `blockproc` and `dct2`.
+* Poisson noise generation uses physically meaningful photon count scaling.
+* Detection scripts run MATLAB in **batch mode**, so MATLAB must support `-batch`.
+
+---
+
+# 📁 Project Structure
+
+```
+project/
+│
+├── noise_detecting/
+│   ├── detect_noise_type.m
+│   └── batch_test.py
+│
+├── noise_gen/
+│   └── MATLAB noise generation scripts
+│
+├── noisy_output/        # Generated images
+└── README.md            # This file
 ```
 
 ---
 
-### **2. Install via MATLAB Add-On Explorer (GUI)**
+# 📝 Author
 
-1. Open MATLAB.
-2. Go to **Home → Add-Ons → Get Add-Ons**.
-3. Search for **Image Processing Toolbox**.
-4. Click **Install** and follow prompts (requires a MathWorks account and license).
-
----
-
-### **3. Install via MATLAB Command Line (Optional)**
-
-1. Download the `.mltbx` installer from [MathWorks](https://www.mathworks.com/products/image.html).
-2. In MATLAB, run:
-
-```matlab
-matlab.addons.install('C:\Path\To\Image_Processing_Toolbox.mltbx')
-```
-
----
-
-### **4. Verify Installation**
-
-After installation, run:
-
-```matlab
-license('test', 'Image_Toolbox')  % Should return 1
-```
-
----
-
-## **Running the Python Wrapper**
-
-```bash
-python noise_gen/noise_gen.py <input_image> -n <num_images> -t <noise_type> --matlab-path "<path_to_matlab_exe>"
-```
-
-* `<input_image>`: Path to the clean image
-* `-n <num_images>`: Number of images per noise type (default: 5)
-* `-t <noise_type>`: Noise type (`all`, `gaussian`, `salt_pepper`, `poisson`, `speckle`, `uniform`; default: `all`)
-* `--matlab-path`: Optional path to MATLAB executable (default searches system PATH)
-
-**Example:**
-
-```bash
-python noise_gen/noise_gen.py ./pre_transform_image/sample1.jpg -n 5 -t gaussian --matlab-path "C:\Program Files\MATLAB\R2025b\bin\matlab.exe"
-```
-
----
-
-## **Alternative (No Toolbox Required)**
-
-If you do not have the Image Processing Toolbox, the MATLAB functions can be modified to replace `im2double` and `im2uint8` with native conversions:
-
-```matlab
-img_double = double(img) / 255;        % instead of im2double
-noisy = uint8(noisy_double * 255);     % instead of im2uint8
-```
-
-This allows the code to run on **any MATLAB installation**.
-
----
-
-## **Output**
-
-* All noisy images are saved in `noisy_output` (relative to the input image location by default).
-* The original clean image is saved as `clean_original.png`.
-
----
-
-## **Notes**
-
-* Make sure MATLAB can run in **batch mode** (non-interactive) to avoid hanging when called from Python.
-* Use flags `-nojvm -nodisplay -nosplash -batch` for headless execution.
-* Ensure your license includes the Image Processing Toolbox if using `im2double` and `im2uint8`.
-
----
-
-**Author:** [Your Name]
-**Date:** 2025
+Lam Nguyen
+2025

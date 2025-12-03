@@ -41,34 +41,57 @@ function generate_noise_type(img, output_dir, num_images, noise_type)
     for i = 1:num_images
         switch noise_type
             case 'gaussian'
-                sigma = randi([50, 200]);   % random strong noise
+                sigma = randi([5, 20]);   % moderate Gaussian noise
                 noisy = add_gaussian_noise(img, 0, sigma);
                 filename = sprintf('gaussian_%02d_sigma%.1f.png', i, sigma);
                 
             case 'salt_pepper'
-                density = rand() * 0.9;   % up to 90% corrupted
+                density = rand() * 0.5;   
                 noisy = imnoise(img, 'salt & pepper', density);
                 filename = sprintf('salt_pepper_%02d_density%.4f.png', i, density);
                 
             case 'poisson'
-                % Poisson noise doesn't have adjustable parameters
-                % Generate with different random seeds
-                noisy = imnoise(im2double(img), 'poisson');
-                noisy = im2uint8(noisy);
-                filename = sprintf('poisson_%02d.png', i);
+                % Poisson noise: variance = mean (in photon counts)
+                % Lower peak = image scaled to fewer photon counts = more relative noise
+                % Peak values chosen to show clear progression from subtle to heavy noise
+                peak_values = [50, 20, 10, 5, 2];  % Descending = increasing noise
+                peak = peak_values(mod(i-1, length(peak_values)) + 1);
                 
+                % Convert to double [0,1]
+                img_norm = im2double(img);
+                
+                % Scale up to peak photon count
+                img_scaled = img_norm * peak;
+                
+                % Add Poisson noise (models photon shot noise)
+                noisy_scaled = imnoise(img_scaled, 'poisson');
+                
+                % Scale back to [0,1]
+                noisy = noisy_scaled / peak;
+                
+                % Clip to valid range
+                noisy = max(0, min(1, noisy));
+                
+                filename = sprintf('poisson_%02d_peak%d.png', i, peak);
+                fprintf('Generated %s (SNR = %.1f dB, lower peak = more noise)\n', ...
+                        filename, 10*log10(peak));
+                
+                % Save as PNG (lossless)
+                imwrite(im2uint8(noisy), fullfile(output_dir, filename));
+                continue;  % Skip the imwrite at the end
+
             case 'speckle'
-                variance = 0.5 + (i-1) * (1.5-0.5) / max(num_images-1, 1);  
+                variance = 0.1 + (i-1) * (0.5-0.1) / max(num_images-1, 1);  
                 noisy = imnoise(img, 'speckle', variance);
                 filename = sprintf('speckle_%02d_var%.3f.png', i, variance);
                 
             case 'uniform'
-                range = 80 + (i-1) * (150-80) / max(num_images-1, 1);
+                range = 20 + (i-1) * (50-20) / max(num_images-1, 1);   % moderate uniform noise
                 noisy = add_uniform_noise(img, -range, range);
                 filename = sprintf('uniform_%02d_range%.1f.png', i, range);
             
             case 'jpeg_artifacts'
-                quality = randi([1, 20]);   % extremely low quality
+                quality = randi([30, 70]);   % reasonable JPEG compression
                 noisy = add_jpeg_artifacts(img, quality);
                 filename = sprintf('jpeg_artifact_%02d_q%d.png', i, quality);
         end
@@ -94,7 +117,8 @@ function noisy = add_uniform_noise(img, low, high)
 end
 
 function noisy = add_jpeg_artifacts(img, quality)
-    imwrite(img, 'temp.jpg', 'Quality', quality);
-    noisy = imread('temp.jpg');
-    delete('temp.jpg');
+    temp_file = [tempname '.jpg'];
+    imwrite(img, temp_file, 'Quality', quality);
+    noisy = imread(temp_file);
+    delete(temp_file);
 end

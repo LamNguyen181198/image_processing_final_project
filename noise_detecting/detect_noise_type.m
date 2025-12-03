@@ -1,142 +1,132 @@
-function noise_type = detect_noise_type(image_path)
-    % DETECT_NOISE_TYPE Detects noise using decision tree approach
-    %   Uses mutually exclusive tests instead of scoring
-    
-    % Read image
-    img = imread(image_path);
-    if size(img, 3) == 3
-        img = rgb2gray(img);
-    end
-    img = double(img);
-    
-    fprintf('\n=== Noise Detection (Decision Tree) ===\n');
-    fprintf('Image: %s\n\n', image_path);
-    
-    %% DECISION 1: Is this Salt & Pepper? (Most distinctive pattern)
-    fprintf('TEST 1: Salt & Pepper Detection\n');
-    
-    % S&P creates ONLY values at extremes (0 or 255)
-    % Count pixels at exact extremes
-    exact_black = sum(img(:) == 0);
-    exact_white = sum(img(:) == 255);
-    exact_extreme_ratio = (exact_black + exact_white) / numel(img);
-    
-    fprintf('  Exact extreme pixels (0 or 255): %.2f%%\n', exact_extreme_ratio * 100);
-    
-    % S&P key feature: median filter removes it almost completely
-    median_filtered = medfilt2(uint8(img), [3 3]);
-    diff_before_after = mean(abs(img(:) - double(median_filtered(:))));
-    
-    fprintf('  Median filter effect: %.2f (high = S&P)\n', diff_before_after);
-    
-    % Decision: S&P if has many exact extremes AND median filter is very effective
-    if exact_extreme_ratio > 0.02 && diff_before_after > 20
-        noise_type = 'salt_pepper';
-        fprintf('  => YES: Salt & Pepper detected\n\n');
-        display_results(img, noise_type);
-        return;
-    else
-        fprintf('  => NO: Not Salt & Pepper\n');
-        fprintf('     (exact extremes too low or median filter not effective)\n\n');
-    end
-    
-    %% DECISION 2: Is this Gaussian? (Additive, constant variance)
-    fprintf('TEST 2: Gaussian Noise Detection\n');
-    
-    % Extract noise residual
-    noise = img - imgaussfilt(img, 2);
-    
-    % Gaussian Test 1: Is noise distribution symmetric and normal?
-    skew = abs(skewness(noise(:)));
-    fprintf('  Skewness: %.3f (< 0.3 = symmetric)\n', skew);
-    
-    % Gaussian Test 2: Does noise have constant variance?
-    [h, w] = size(img);
-    n_blocks = 16;
-    block_h = floor(h / 4);
-    block_w = floor(w / 4);
-    noise_stds = [];
-    
-    for i = 1:4
-        for j = 1:4
-            block = noise((i-1)*block_h+1:min(i*block_h,h), ...
-                         (j-1)*block_w+1:min(j*block_w,w));
-            noise_stds(end+1) = std(block(:));
-        end
-    end
-    
-    std_cv = std(noise_stds) / mean(noise_stds);
-    fprintf('  Variance consistency: %.3f (< 0.2 = constant)\n', std_cv);
-    
-    % Gaussian Test 3: Is noise independent of image intensity?
-    img_smooth = imgaussfilt(img, 3);
-    noise_abs = abs(noise(:));
-    intensity = img_smooth(:);
-    
-    % Divide into intensity bins and check noise variance
-    [~, bin_idx] = histc(intensity, linspace(min(intensity), max(intensity), 5));
-    bin_stds = [];
-    for b = 1:4
-        bin_noise = noise_abs(bin_idx == b);
-        if length(bin_noise) > 100
-            bin_stds(end+1) = std(bin_noise);
-        end
-    end
-    
-    if ~isempty(bin_stds)
-        intensity_independence = std(bin_stds) / mean(bin_stds);
-    else
-        intensity_independence = 1;
-    end
-    
-    fprintf('  Intensity independence: %.3f (< 0.3 = independent)\n', intensity_independence);
-    
-    % Decision: Gaussian if symmetric, constant variance, intensity-independent
-    if skew < 0.4 && std_cv < 0.25 && intensity_independence < 0.4
-        noise_type = 'gaussian';
-        fprintf('  => YES: Gaussian noise detected\n\n');
-        display_results(img, noise_type);
-        return;
-    else
-        fprintf('  => NO: Not Gaussian\n');
-        fprintf('     (not symmetric or variance not constant)\n\n');
-    end
-    
-    %% No clear detection
-    noise_type = 'unknown';
-    fprintf('=> RESULT: Unknown noise type\n\n');
-    display_results(img, noise_type);
-end
+function out = detect_noise_type(imgPath)
+%DETECT_NOISE_TYPE Detect Gaussian or JPEG artifacts. Compatible with Python caller.
 
-function display_results(img, noise_type)
-    % Visualization
-    figure('Position', [100 100 1200 400]);
-    
-    subplot(1,3,1);
-    imshow(uint8(img));
-    title('Original Image');
-    
-    subplot(1,3,2);
-    if strcmp(noise_type, 'salt_pepper')
-        median_filtered = medfilt2(uint8(img), [3 3]);
-        imshow(median_filtered);
-        title('After Median Filter');
-    elseif strcmp(noise_type, 'gaussian')
-        noise = img - imgaussfilt(img, 2);
-        histogram(noise(:), 50, 'Normalization', 'probability');
-        title('Noise Distribution');
-        xlabel('Value');
-        ylabel('Probability');
-        grid on;
-    else
-        imshow(uint8(img));
-        title('Unknown Noise');
+    try
+        % -----------------------------------------------------------
+        % READ IMAGE
+        % -----------------------------------------------------------
+        img = imread(imgPath);
+
+        % Convert to grayscale double
+        if size(img,3) == 3
+            img = rgb2gray(img);
+        end
+        img = im2double(img);
+
+        % ===========================================================
+        % 1. GAUSSIAN NOISE DETECTION
+        % ===========================================================
+        % High-frequency extraction
+        h = fspecial('gaussian', [5 5], 1.0);
+        low = imfilter(img, h, 'replicate');
+        high = img - low;
+
+        hfVar   = var(high(:));
+        hfKurt  = kurtosis(high(:));
+        hfSkew  = skewness(high(:));
+
+        isHighVar      = hfVar > 0.0005;
+        isGaussKurt    = abs(hfKurt - 3) < 1.2;
+        isGaussSkew    = abs(hfSkew) < 0.7;
+
+        isGaussian = isHighVar && (isGaussKurt || isGaussSkew);
+
+        % ===========================================================
+        % 2. JPEG ARTIFACT DETECTION
+        % ===========================================================
+        % JPEG introduces block boundaries at multiples of 8
+
+        % ---------- (A) BLOCKINESS (we keep your original idea) ----------
+        rows = 8:8:size(img,1)-1;
+        cols = 8:8:size(img,2)-1;
+
+        bbd_h = mean(abs(img(rows,:) - img(rows+1,:)), 'all');
+        bbd_v = mean(abs(img(:,cols) - img(:,cols+1)), 'all');
+        blockBoundary = (bbd_h + bbd_v) / 2;
+
+        % internal edges
+        internal = mean(abs(diff(img,1,1)), 'all') + ...
+                   mean(abs(diff(img,1,2)), 'all');
+        internal = internal/2 + 1e-8;
+
+        blockiness_ratio = blockBoundary / internal;
+
+        % ---------- (B) DCT quantization detection ----------
+        blockSize = 8;
+        fun = @(b) dct2(b.data);
+
+        dctImg = blockproc(img, [blockSize blockSize], fun);
+
+        % Extract AC high-frequency region
+        HF_AC = abs(dctImg(5:end,5:end));
+
+        % Quantization leaves *strong peaks* at multiples of quant step
+        % We look at histogram "spikiness"
+        edges = linspace(0, max(HF_AC(:)), 80);
+        hst = histcounts(HF_AC(:), edges);
+
+        % Peakiness metric
+        peakiness = max(hst) / mean(hst);
+
+        % Empirical thresholds (tuned)
+        isJPEG_DCT = peakiness > 3.2;  % sensitive even at QF=70–90
+        isJPEG_Block = (blockiness_ratio > 1.25) && (blockBoundary > 0.010);
+
+        isJPEG = isJPEG_DCT || isJPEG_Block;
+
+        % ===========================================================
+        % 3. SALT & PEPPER DETECTION (balanced, stable)
+        % ===========================================================
+
+        medImg = medfilt2(img, [3 3]);
+
+        % 1) IMPULSE DEVIATION (moderate sensitivity)
+        impulseMask = abs(img - medImg) > 0.25;
+        impulseRatio = sum(impulseMask(:)) / numel(img);
+
+        % 2) HARD EXTREME PIXELS (very specific to S&P)
+        extremeRatio = (sum(img(:) <= 0.02) + sum(img(:) >= 0.98)) / numel(img);
+
+        % 3) IMPULSE PEAK SCORE
+        % If S&P exists, median filtering reduces noise strongly → big residual drop
+        medResidual = mean(abs(img(:) - medImg(:)));
+
+        % Residual of the high-frequency (Gaussian is smoother)
+        hf = img - imgaussfilt(img, 1);   % high-frequency component
+        medResidualHF = mean(abs(hf(:))); % now safe to index
+
+        % Ratio is strong for impulse noise
+        impulsePeak = medResidualHF / (medResidual + 1e-8);
+
+        % ---------- Decision combining all metrics ----------
+        cond1 = impulseRatio > 0.008;      % ≥ 0.8% impulses
+        cond2 = extremeRatio > 0.003;      % ≥ 0.3% extreme pixels
+        cond3 = impulsePeak > 2.0;         % big HF vs median difference
+
+        % Require at least TWO conditions to classify as S&P
+        isSaltPepper = (cond1 + cond2 + cond3) >= 2;
+
+        % Prevent JPEG or Gaussian misfiring when impulses exist
+        if isSaltPepper
+            isGaussian = false;
+            isJPEG = false;
+        end
+
+        % ===========================================================
+        % FINAL DECISION
+        % ===========================================================
+        if isSaltPepper
+            out = 'salt_pepper';
+        elseif isGaussian
+            out = 'gaussian';
+        elseif isJPEG
+            out = 'jpeg_artifact';
+        else
+            out = 'none';
+        end
+
+    catch ME
+        disp("ERROR:");
+        disp(getReport(ME));
     end
-    
-    subplot(1,3,3);
-    text(0.5, 0.5, upper(strrep(noise_type, '_', ' ')), ...
-         'FontSize', 20, 'FontWeight', 'bold', ...
-         'HorizontalAlignment', 'center');
-    axis off;
-    title('Detection Result');
 end
