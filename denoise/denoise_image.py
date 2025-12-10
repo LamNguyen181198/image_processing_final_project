@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 
 # Import noise detection
 sys.path.append(str(Path(__file__).parent.parent / 'noise_detecting'))
-from detect_noise import detect_noise
+from noise_detecting.detect_noise import detect_noise
 
 
 def denoise_image(img_path, output_path=None, use_ml=True, verbose=True):
