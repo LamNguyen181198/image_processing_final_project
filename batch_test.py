@@ -1,5 +1,6 @@
 import subprocess
 import sys
+import argparse
 from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -27,6 +28,14 @@ def detect_noise_matlab(img_path, matlab_func_dir):
 
     # Extract last line (the detected noise type)
     lines = result.stdout.strip().splitlines()
+
+    # If MATLAB printed debug lines (prefixed with 'DEBUG:'), forward
+    # the full MATLAB stdout to the Python console so the user sees it.
+    if any('DEBUG:' in l for l in lines):
+        print('--- MATLAB OUTPUT (debug) ---')
+        print(result.stdout.strip())
+        print('--- END MATLAB OUTPUT ---')
+
     return lines[-1] if lines else "error"
 
 
@@ -54,19 +63,37 @@ def parse_filename(filename):
     return "unknown", {}
 
 
-def batch_test_images(image_dir, output_csv="detection_results.csv"):
-    """Test all images in a directory and save results"""
+def batch_test_images(image_dir, output_csv="detection_results.csv", only_type=None):
+    """Test images in a directory and save results.
+
+    If `only_type` is provided (e.g. 'uniform'), only images whose
+    parsed ground-truth equals that type will be tested. This lets you
+    quickly re-run a subset without processing the entire folder.
+    """
     image_dir = Path(image_dir)
     script_dir = Path(__file__).parent.resolve() / "noise_detecting"
     matlab_func_dir = str(script_dir)
-    
+
     # Find all PNG images
     image_files = sorted(image_dir.glob("*.png"))
-    
+
     if not image_files:
         print(f"No PNG images found in {image_dir}")
         return None
-    
+
+    # If requested, filter to only a specific noise type (parsed from filename)
+    if only_type:
+        filtered = []
+        for f in image_files:
+            true_t, _ = parse_filename(f.name)
+            if true_t == only_type:
+                filtered.append(f)
+        image_files = filtered
+
+    if not image_files:
+        print(f"No matching PNG images found for filter '{only_type}' in {image_dir}")
+        return None
+
     print(f"Found {len(image_files)} images. Testing...\n")
     
     results = []
@@ -91,13 +118,13 @@ def batch_test_images(image_dir, output_csv="detection_results.csv"):
             'params': str(params)
         })
         
-        status = "✓" if correct else "✗"
+        status = "[OK]" if correct else "[FAIL]"
         print(f"{status} (True: {true_type}, Detected: {detected_type})")
     
     # Save to CSV
     df = pd.DataFrame(results)
     df.to_csv(output_csv, index=False)
-    print(f"\n✓ Results saved to: {output_csv}")
+    print(f"\n[COMPLETE] Results saved to: {output_csv}")
     
     return df
 
@@ -178,21 +205,22 @@ def visualize_results(df, output_image="detection_results.png"):
     ax4.axis('off')
     
     plt.savefig(output_image, dpi=150, bbox_inches='tight')
-    print(f"✓ Visualization saved to: {output_image}")
+    print(f"[SAVED] Visualization saved to: {output_image}")
     plt.show()
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python batch_test.py <image_directory> [output_csv]")
-        print("Example: python batch_test.py ./noisy_output")
-        sys.exit(1)
-    
-    image_dir = sys.argv[1]
-    output_csv = sys.argv[2] if len(sys.argv) > 2 else "detection_results.csv"
-    
-    # Run batch testing
-    df = batch_test_images(image_dir, output_csv)
+    parser = argparse.ArgumentParser(description='Batch test noise detection on images')
+    parser.add_argument('image_dir', help='Directory containing PNG images')
+    parser.add_argument('--output', '-O', dest='output_csv', default='detection_results.csv', help='Output CSV filename')
+    parser.add_argument('--only', '-o', dest='only_type', default=None, help='Only test images of this ground-truth type (e.g. uniform)')
+    args = parser.parse_args()
+
+    image_dir = args.image_dir
+    output_csv = args.output_csv
+
+    # Run batch testing (optionally limited to one noise type)
+    df = batch_test_images(image_dir, output_csv, only_type=args.only_type)
     
     if df is not None:
         # Create visualization
