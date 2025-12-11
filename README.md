@@ -1,39 +1,272 @@
-# Image Processing Final Project: ML-Based Noise Detection
+# Image Processing Final Project: ML-Based Noise Detection & Denoising
 
-This project provides a **complete workflow** for generating noisy images and detecting noise types using **Machine Learning** instead of traditional threshold-based methods.
+This project provides a **complete ML-powered workflow** for automatic noise detection and optimal denoising of images with various noise types.
 
-## Project Status: 🎯 Training Data Ready
+## 🎯 Project Overview
 
-**Current Phase:** Training data preparation complete. Ready for ML model training.
+An intelligent image denoising application that:
+1. **Detects** noise type automatically using Machine Learning (Random Forest)
+2. **Applies** optimal denoising filters based on detected noise
+3. **Preserves** image details while removing noise effectively
+
+**Supported Noise Types:** Gaussian, Salt & Pepper, Speckle, Uniform
 
 ---
 
-## System Overview
+## 🚀 Quick Start
 
-### ✅ **Noise Generation (MATLAB)**
+### Prerequisites
+- **Python 3.8+** with packages: `tkinter`, `PIL`, `numpy`, `scikit-learn`, `pandas`, `matlab`
+- **MATLAB R2020a+** with Image Processing Toolbox
+- **MATLAB Engine for Python** installed
 
-Generates realistic noisy images with controlled parameters:
+### Installation
 
-* **Gaussian noise** - Additive white Gaussian (σ = 5-20)
-* **Salt & Pepper noise** - Impulse noise (density 0.02-0.5)
-* **Poisson noise** - Photon shot noise (peak values: 2-50)
-* **Speckle noise** - Multiplicative noise (variance 0.1-0.5)
-* **Uniform noise** - Additive uniform (range 20-50)
-* **JPEG artifacts** - Compression artifacts (quality 30-70)
+1. **Clone the repository:**
+```bash
+git clone https://github.com/LamNguyen181198/image_processing_final_project.git
+cd image_processing_final_project
+```
 
-### ✅ **Feature Extraction (MATLAB)**
+2. **Install Python dependencies:**
+```bash
+pip install pillow numpy scikit-learn pandas matplotlib matlabengine
+```
 
-Extracts **23 numerical features** from each image:
+3. **Verify MATLAB Engine:**
+```python
+import matlab.engine
+eng = matlab.engine.start_matlab()
+print("MATLAB Engine ready!")
+```
+
+### Running the Application
+
+**Main GUI Application:**
+```bash
+python denoise_app.py
+```
+
+**Using the Application:**
+1. Click **"Load Noisy Image"** to select an image
+2. Click **"Detect & Denoise"** to process
+3. View results and click **"Save Denoised Image"** if satisfied
+
+---
+
+## 📊 Current Status & Performance
+
+### ✅ **Working Well**
+- **Gaussian Noise:** Non-Local Means filter provides excellent noise removal with detail preservation
+- **Salt & Pepper Noise:** Adaptive median filter effectively removes impulse noise
+
+### ⚙️ **Needs Fine-Tuning**
+- **Uniform Noise:** Bilateral filter works but may need parameter adjustments for optimal sharpness
+- **Speckle Noise:** Adaptive bilateral filter removes noise but detail preservation needs improvement
+
+### 🎓 **ML Detection Performance**
+- **Model:** Random Forest Classifier (100 trees)
+- **Training Accuracy:** ~95%
+- **Test Accuracy:** ~80% (10-sample test set)
+- **Features:** 29 statistical features extracted from images
+- **Training Data:** 61 images (51 train / 10 test split)
+
+---
+
+## 🏗️ System Architecture
+
+### **Detection Pipeline (ML-Based)**
+```
+Input Image → Feature Extraction (MATLAB) → Random Forest Classifier → Noise Type
+```
+
+**Feature Categories (29 features):**
 - Variance-mean relationships (6 features)
-- Histogram shape analysis (3 features)
-- Statistical moments (3 features)
-- Global statistics (2 features)
+- Histogram analysis (4 features)  
+- Statistical moments (4 features)
+- Global statistics (3 features)
 - Impulse detection (3 features)
-- Frequency domain (6 features)
+- Frequency domain analysis (6 features)
+- Noise characteristics (3 features)
 
-### ✅ **Training Dataset**
+### **Denoising Pipeline**
+```
+Detected Noise Type → Optimal Filter Selection → MATLAB Processing → Denoised Image
+```
 
-**Generated Dataset:**
+**Filter Strategy:**
+
+| Noise Type | Filter Used | Key Parameters |
+|------------|-------------|----------------|
+| **Gaussian** | Non-Local Means / Bilateral | DegreeOfSmoothing: 0.04-0.08 |
+| **Salt & Pepper** | Adaptive Median | Window: 3×3 to 7×7 |
+| **Speckle** | Adaptive Bilateral + Unsharp Mask | Spatial: 1.2-2.0, Intensity: 0.08-0.12, Sharpen: 35% |
+| **Uniform** | Bilateral + Sharpening | Spatial: 1.0-1.8, Intensity: 0.03-0.06, Sharpen: 30-50% |
+
+---
+
+## 📁 Project Structure
+
+```
+image_processing_final_project/
+│
+├── denoise_app.py              # Main GUI application
+├── README.md                   # This file
+├── PRESENTATION_DOCS.md        # Presentation documentation
+│
+├── denoise/
+│   ├── denoise_image.py        # Python interface for denoising
+│   └── denoise_filters.m       # MATLAB denoising filters
+│
+├── noise_detecting/
+│   ├── detect_noise.py         # Python ML detection interface
+│   └── detect_noise_type.m     # Legacy MATLAB detection (unused)
+│
+├── noise_gen/
+│   ├── noise_gen.py            # Python noise generation interface
+│   └── generate_noisy_images.m # MATLAB noise generation
+│
+├── training/
+│   ├── prepare_training_data.py    # Generate training dataset
+│   ├── split_train_test.py         # Train/test split
+│   ├── extract_features.m          # MATLAB feature extraction
+│   ├── features_to_csv.m           # Export features to CSV
+│   ├── training_data_features.csv  # Full dataset
+│   ├── training_data_features_train.csv
+│   ├── training_data_features_test.csv
+│   └── models/
+│       ├── train_random_forest.py  # Train ML model
+│       ├── predict_noise.py        # Prediction interface
+│       └── random_forest_model.pkl # Trained model
+│
+└── noisy_output/               # Generated noisy images
+```
+
+---
+
+## 🔧 Training Your Own Model
+
+### 1. Generate Training Data
+```bash
+# Generate noisy images (51 training samples)
+python training/prepare_training_data.py
+
+# Split into train/test sets
+python training/split_train_test.py
+```
+
+### 2. Train Model
+```bash
+cd training/models
+python train_random_forest.py
+```
+
+### 3. Test Model
+```python
+from training.models.predict_noise import predict_noise_type
+
+noise_type = predict_noise_type('path/to/test/image.jpg')
+print(f"Detected: {noise_type}")
+```
+
+---
+
+## 🎨 Noise Generation
+
+Generate custom noisy images:
+
+```python
+from noise_gen.noise_gen import add_noise
+
+# Generate specific noise type
+add_noise('input.jpg', 'output.jpg', 'gaussian', sigma=10)
+add_noise('input.jpg', 'output.jpg', 'salt_pepper', density=0.05)
+add_noise('input.jpg', 'output.jpg', 'speckle', variance=0.15)
+add_noise('input.jpg', 'output.jpg', 'uniform', range_val=20)
+```
+
+**Supported Parameters:**
+- **Gaussian:** `sigma` (3-15, default: 10)
+- **Salt & Pepper:** `density` (0.01-0.15, default: 0.05)
+- **Speckle:** `variance` (0.05-0.25, default: 0.15)
+- **Uniform:** `range_val` (10-40, default: 20)
+
+---
+
+## 📈 Performance Metrics
+
+The application provides real-time metrics:
+- **Avg. Noise Removed:** Measures denoising effectiveness
+- **Noise σ:** Estimated noise standard deviation
+- **Processing Time:** ML detection + MATLAB filtering time
+
+---
+
+## 🔬 Technical Details
+
+### **ML Model Specifications**
+- **Algorithm:** Random Forest Classifier
+- **Parameters:** 100 estimators, max_depth=20, random_state=42
+- **Features:** 29 numerical features per image
+- **Training Size:** 51 images across 4 noise classes
+- **Test Size:** 10 images (stratified split)
+
+### **Denoising Approach**
+- **Luminance-Color Separation:** Speckle filter processes LAB color space
+- **Adaptive Parameters:** Filter strength adjusts based on estimated noise level
+- **Edge Preservation:** Bilateral filters preserve edges while smoothing
+- **Detail Enhancement:** Unsharp masking restores sharpness post-filtering
+
+---
+
+## 📝 Recent Updates (Dec 12, 2025)
+
+- ✅ Removed Poisson noise from system (focused on 4 main types)
+- ✅ Switched to ML-based detection (superior to rule-based)
+- ✅ Optimized Uniform filter with bilateral + sharpening
+- ✅ Implemented Speckle filter with adaptive bilateral + LAB processing
+- ✅ Added 35% unsharp masking to Speckle for detail enhancement
+- ✅ Renamed `apply_lee_filter` to `apply_adaptive_bilateral_filter`
+
+---
+
+## 🐛 Known Issues
+
+1. **Speckle Denoising:** Detail preservation not yet optimal - image may appear softer than desired
+2. **Uniform Denoising:** May need per-image tuning for best results
+3. **Small Training Set:** 61 images may not capture all noise variations
+4. **Grayscale Only:** Current filters convert RGB to grayscale (Speckle maintains color via LAB)
+
+---
+
+## 🎯 Future Improvements
+
+- [ ] Increase training dataset to 200-500 images per noise type
+- [ ] Implement Non-Local Means for Speckle noise
+- [ ] Add confidence scores for ML predictions
+- [ ] Support batch processing of multiple images
+- [ ] Add noise level estimation display
+- [ ] Implement mixed noise detection/removal
+
+---
+
+## 📚 Documentation
+
+- **[PRESENTATION_DOCS.md](PRESENTATION_DOCS.md)** - Detailed presentation documentation
+- **[TRAINING_DATA_GUIDE.md](TRAINING_DATA_GUIDE.md)** - Guide for generating training data
+- **[NOISE_DETECTION_METHODOLOGY.md](NOISE_DETECTION_METHODOLOGY.md)** - ML detection approach
+
+---
+
+## 👥 Contributors
+
+Lam Nguyen - [@LamNguyen181198](https://github.com/LamNguyen181198)
+
+---
+
+## 📄 License
+
+This project is for educational purposes as part of an Image Processing course final project.
 - **Total samples:** 71 images
 - **Training set:** 56 samples (78.9%)
 - **Test set:** 15 samples (21.1%)

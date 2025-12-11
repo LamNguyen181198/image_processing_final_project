@@ -111,6 +111,63 @@ function features = extract_features(imgPath)
         % Entropy
         features.entropy = entropy(img);
         
+        %% FEATURE 21-23: Enhanced Noise-Specific Features
+        
+        % Feature 21: Coefficient of Variation (CV) consistency - for Speckle detection
+        % Speckle has constant CV across patches
+        patchSize_cv = 16;
+        cvList = [];
+        for i = 1:patchSize_cv:(imgH - patchSize_cv + 1)
+            for j = 1:patchSize_cv:(imgW - patchSize_cv + 1)
+                patch = img(i:i+patchSize_cv-1, j:j+patchSize_cv-1);
+                patchMean = mean(patch(:));
+                patchStd = std(patch(:));
+                if patchMean > 0.05
+                    cvList(end+1) = patchStd / (patchMean + eps);
+                end
+            end
+        end
+        if ~isempty(cvList)
+            features.cv_consistency = std(cvList) / (mean(cvList) + eps);
+        else
+            features.cv_consistency = 0;
+        end
+        
+        % Feature 22: Multi-scale Gaussian score
+        % Tests if noise is Gaussian at multiple scales
+        scales = [0.8, 1.2, 1.8];
+        gaussScores = zeros(1, length(scales));
+        for idx = 1:length(scales)
+            sigma = scales(idx);
+            h_scale = fspecial('gaussian', [5 5], sigma);
+            residual = img - imfilter(img, h_scale, 'replicate');
+            kurt = kurtosis(residual(:));
+            skew = abs(skewness(residual(:)));
+            % Gaussian has kurtosis≈3, skewness≈0
+            gaussScores(idx) = exp(-abs(kurt-3)/2) * exp(-skew);
+        end
+        features.multiscale_gaussian_score = mean(gaussScores);
+        
+        % Feature 23: Histogram flatness of noise residual
+        % Uniform noise has flat residual histogram, Gaussian has bell-shaped
+        residual_uniform = img - imgaussfilt(img, 1.5);
+        [histCounts_res, ~] = histcounts(residual_uniform(:), 50);
+        histCounts_res = histCounts_res / sum(histCounts_res);
+        features.residual_histogram_flatness = std(histCounts_res);
+        
+        %% FEATURE 24-26: Additional Gaussian vs Uniform discriminators
+        
+        % Feature 24: Kurtosis of noise residual (Gaussian≈3, Uniform≈1.8)
+        features.residual_kurtosis = kurtosis(residual_uniform(:));
+        
+        % Feature 25: Histogram coefficient of variation
+        % Uniform has very consistent bin heights (low CV)
+        features.histogram_cv = std(histCounts_res) / (mean(histCounts_res) + eps);
+        
+        % Feature 26: Peak-to-average ratio in histogram
+        % Gaussian has clear peak, Uniform is flat
+        features.histogram_peak_ratio = max(histCounts_res) / mean(histCounts_res);
+        
     catch ME
         fprintf('ERROR in extract_features: %s\n', ME.message);
         % Return NaN features on error
@@ -124,6 +181,9 @@ function features = extract_features(imgPath)
                          'salt_pepper_score', NaN, 'impulse_ratio', NaN, ...
                          'median_diff_variance', NaN, 'dct_dc_energy', NaN, ...
                          'dct_ac_energy', NaN, 'edge_variance', NaN, ...
-                         'peak_intensity', NaN, 'min_intensity', NaN, 'entropy', NaN);
+                         'peak_intensity', NaN, 'min_intensity', NaN, 'entropy', NaN, ...
+                         'cv_consistency', NaN, 'multiscale_gaussian_score', NaN, ...
+                         'residual_histogram_flatness', NaN, 'residual_kurtosis', NaN, ...
+                         'histogram_cv', NaN, 'histogram_peak_ratio', NaN);
     end
 end

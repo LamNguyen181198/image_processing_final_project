@@ -22,8 +22,8 @@ import time
 sys.path.append(str(Path(__file__).parent / 'noise_detecting'))
 sys.path.append(str(Path(__file__).parent / 'denoise'))
 
-from detect_noise import detect_noise
-from denoise_image import apply_denoise_filter
+from noise_detecting.detect_noise import detect_noise
+from denoise.denoise_image import apply_denoise_filter
 
 
 class DenoiseApp:
@@ -251,10 +251,8 @@ class DenoiseApp:
         noise_descriptions = {
             'Gaussian': 'Normal distribution noise',
             'Salt & Pepper': 'Random white/black pixels',
-            'Poisson': 'Shot noise (low light)',
             'Speckle': 'Multiplicative noise',
-            'Uniform': 'Random uniform noise',
-            'JPEG Artifact': 'Compression artifacts'
+            'Uniform': 'Random uniform noise'
         }
         
         for noise, desc in noise_descriptions.items():
@@ -460,6 +458,7 @@ class DenoiseApp:
             self.root.after(0, lambda: self.progress_label.config(text="Detecting noise type..."))
             time.sleep(0.3)
             
+            # Use ML-based detection (trained Random Forest model)
             noise_type = detect_noise(str(self.noisy_image_path), use_ml=True)
             self.detected_noise = noise_type
             
@@ -493,7 +492,8 @@ class DenoiseApp:
             self.root.after(0, self._processing_complete)
             
         except Exception as e:
-            self.root.after(0, lambda: self._processing_error(str(e)))
+            error_msg = str(e)
+            self.root.after(0, lambda msg=error_msg: self._processing_error(msg))
             
     def _processing_start(self):
         """Update UI when processing starts"""
@@ -524,7 +524,6 @@ class DenoiseApp:
         filter_map = {
             'gaussian': 'Gaussian Filter (σ=1.5)',
             'salt_pepper': 'Median Filter (5×5)',
-            'poisson': 'Anscombe + Wiener Filter',
             'speckle': 'Lee Filter (5×5)',
             'uniform': 'Wiener Filter',
             'jpeg_artifact': 'Bilateral Filter',

@@ -137,14 +137,10 @@ def extract_label_from_filename(filename):
         return 'gaussian'
     elif 'salt_pepper' in filename_lower:
         return 'salt_pepper'
-    elif 'poisson' in filename_lower:
-        return 'poisson'
     elif 'speckle' in filename_lower:
         return 'speckle'
     elif 'uniform' in filename_lower:
         return 'uniform'
-    elif 'jpeg' in filename_lower:
-        return 'jpeg_artifact'
     else:
         return 'unknown'
 

@@ -1,89 +1,171 @@
 function out = detect_noise_type(imgPath)
+    % Initialize output to prevent "not assigned" error
+    out = 'none';
+    
     try
+        % -----------------------------------------------------------
+        % READ IMAGE
+        % -----------------------------------------------------------
         img = imread(imgPath);
-        if size(img, 3) == 3, img = rgb2gray(img); end
+
+        % Convert to grayscale double
+        if size(img,3) == 3
+            img = rgb2gray(img);
+        end
         img = im2double(img);
+
+        % ===========================================================
+        % THEORY-BASED NOISE DETECTION
+        % ===========================================================
         
-        % Extract noise residuals
-        noiseResidual = img - imfilter(img, fspecial('gaussian', [5 5], 1.0), 'replicate');
+        % Extract noise by subtracting smoothed version
+        smoothed = imgaussfilt(img, 1.5);
+        noise = img - smoothed;
         
-        % STEP 1: Intensity-dependence (var vs mean)
-        patchSize = 10;
-        [imgH, imgW] = size(img);
-        localMeans = []; localVars = [];
-        for i = 1:patchSize:(imgH - patchSize + 1)
-            for j = 1:patchSize:(imgW - patchSize + 1)
+        % ===========================================================
+        % 1. SALT & PEPPER DETECTION (Impulse Noise)
+        % ===========================================================
+        % Characteristics: Random black (0) and white (1) pixels
+        
+        % Count extreme pixels
+        blackPixels = sum(img(:) < 0.05);
+        whitePixels = sum(img(:) > 0.95);
+        extremeRatio = (blackPixels + whitePixels) / numel(img);
+        
+        % Median filter response (median kills impulses)
+        medFiltered = medfilt2(img, [3 3]);
+        medDiff = abs(img - medFiltered);
+        impulsePixels = sum(medDiff(:) > 0.3);
+        impulseRatio = impulsePixels / numel(img);
+        
+        % S&P detection (requires BOTH extreme pixels AND impulse response)
+        isSaltPepper = (extremeRatio > 0.01) && (impulseRatio > 0.01);
+        
+        % ===========================================================
+        % 2. GAUSSIAN NOISE DETECTION (Additive White Gaussian Noise)
+        % ===========================================================
+        % Characteristics: Normal distribution, bell-shaped histogram
+        
+        % Histogram of noise residual
+        [counts, edges] = histcounts(noise(:), 50);
+        counts = counts / sum(counts);
+        
+        % Find peak
+        [peakVal, peakIdx] = max(counts);
+        
+        % Check if peak is centered
+        isCentered = (peakIdx > 20) && (peakIdx < 30);
+        
+        % Check bell shape (peak >> edges)
+        edgeVal = mean([counts(1:3), counts(end-2:end)]);
+        peakRatio = peakVal / (edgeVal + 0.001);
+        isBellShaped = peakRatio > 3.0;
+        
+        % Statistical moments
+        noiseKurt = kurtosis(noise(:));
+        noiseSkew = abs(skewness(noise(:)));
+        
+        % Gaussian has kurtosis ≈ 3, skewness ≈ 0
+        isGaussianMoments = (abs(noiseKurt - 3) < 1.0) && (noiseSkew < 0.5);
+        
+        % Combined Gaussian test
+        isGaussian = isCentered && isBellShaped && isGaussianMoments && ~isSaltPepper;
+        
+        % ===========================================================
+        % 3. SPECKLE NOISE DETECTION (Multiplicative Noise)
+        % ===========================================================
+        % Characteristics: 
+        % - Multiplicative: I_noisy = I_clean * (1 + n)
+        % - Variance proportional to signal intensity
+        % - NOT present in dark regions
+        
+        % Divide image into patches and analyze local statistics
+        patchSize = 16;
+        [h, w] = size(img);
+        
+        localMeans = [];
+        localStds = [];
+        
+        for i = 1:patchSize:h-patchSize+1
+            for j = 1:patchSize:w-patchSize+1
                 patch = img(i:i+patchSize-1, j:j+patchSize-1);
-                localMeans(end+1) = mean(patch(:));
-                localVars(end+1) = var(patch(:));
+                patchMean = mean(patch(:));
+                patchStd = std(patch(:));
+                
+                % Only consider bright patches (speckle doesn't affect dark areas)
+                if patchMean > 0.2
+                    localMeans = [localMeans; patchMean];
+                    localStds = [localStds; patchStd];
+                end
             end
         end
-        valid = (localMeans > 0.05) & isfinite(localMeans) & isfinite(localVars);
-        localMeans = localMeans(valid); localVars = localVars(valid);
         
-        isAdditive = false; isPoisson = false; isSpeckle = false;
-        if numel(localMeans) >= 10
-            p_lin = polyfit(localMeans, localVars, 1);
-            r2_lin = 1 - sum((localVars - polyval(p_lin, localMeans)).^2) / (sum((localVars - mean(localVars)).^2) + eps);
-            p_quad = polyfit(localMeans, localVars, 2);
-            r2_quad = 1 - sum((localVars - polyval(p_quad, localMeans)).^2) / (sum((localVars - mean(localVars)).^2) + eps);
-            varCoeff = var(localVars) / (mean(localVars)^2 + eps);
+        isSpeckle = false;
+        if length(localMeans) >= 5
+            % For multiplicative noise: std ∝ mean (strong linear relationship)
+            correlation = corrcoef(localMeans, localStds);
+            stdMeanCorr = abs(correlation(1,2));
             
-            isAdditive = (r2_lin < 0.3) && (varCoeff < 0.5);
-            isPoisson = (r2_lin > 0.4) && (p_lin(1) > 0.5) && (p_lin(1) < 1.8) && (abs(p_lin(2)) < 0.01);
-            isSpeckle = (r2_quad > 0.5) && (r2_quad > r2_lin + 0.15) && (p_quad(1) > 0.1);
+            % Linear fit
+            p = polyfit(localMeans, localStds, 1);
+            slope = p(1);
+            
+            % Coefficient of Variation should be roughly constant
+            CV = localStds ./ (localMeans + eps);
+            meanCV = mean(CV);
+            stdCV = std(CV);
+            cvConsistency = stdCV / (meanCV + eps);
+            
+            % Speckle criteria:
+            % 1. Strong correlation (> 0.7) between std and mean
+            % 2. Positive slope (std increases with intensity)
+            % 3. Consistent CV across patches
+            hasStrongCorr = stdMeanCorr > 0.7;
+            hasPositiveSlope = slope > 0.1;
+            hasConsistentCV = cvConsistency < 0.5 && meanCV > 0.15 && meanCV < 0.40;
+            
+            isSpeckle = hasStrongCorr && hasPositiveSlope && hasConsistentCV && ~isSaltPepper;
         end
         
-        % STEP 2: Histogram shape
-        [histCounts, ~] = histcounts(noiseResidual(:), 100);
-        histCounts = histCounts / sum(histCounts);
-        [maxPeak, peakIdx] = max(histCounts);
-        hasCentralPeak = ismember(peakIdx, (numel(histCounts)*0.4):(numel(histCounts)*0.6));
-        isFlat = (std(histCounts) / (mean(histCounts) + eps)) < 0.5;
-        extremeBins = 5;
-        bimodalExtreme = (sum(histCounts(1:extremeBins)) + sum(histCounts(end-extremeBins+1:end))) / ...
-                         (sum(histCounts(extremeBins+1:end-extremeBins)) + eps);
-        isBimodal = bimodalExtreme > 0.3;
+        % ===========================================================
+        % 4. UNIFORM NOISE DETECTION (Uniform Distribution)
+        % ===========================================================
+        % Characteristics: Flat rectangular distribution
         
-        % STEP 3: Statistical moments
-        kurt = kurtosis(noiseResidual(:));
-        skew = skewness(noiseResidual(:));
-        isGaussianKurt = abs(kurt - 3) < 1.0;
-        isUniformKurt = (kurt < -0.5) && (abs(kurt - (-1.2)) < 1.0);
-        isSymmetric = abs(skew) < 0.4;
-        noiseVar = var(noiseResidual(:));
+        % Histogram flatness
+        histStd = std(counts);
+        isFlat = histStd < 0.012;
         
-        % STEP 4: Variance-to-mean ratio
-        globalMean = mean(img(:));
-        globalVar = var(img(:));
-        varMeanRatio = globalVar / (globalMean + eps);
-        isPoissonRatio = (varMeanRatio > 0.01) && (varMeanRatio < 0.15);
-        isSpeckleRatio = false;
-        if globalMean > 0.05
-            isSpeckleRatio = (globalVar / (globalMean^2) > 0.01) && (globalVar / (globalMean^2) < 0.5);
+        % Kurtosis (uniform has kurtosis ≈ 1.8, much lower than Gaussian's 3)
+        isLowKurt = noiseKurt < 2.2;
+        
+        % Wide plateau in histogram
+        threshold = max(counts) * 0.4;
+        plateauBins = sum(counts > threshold);
+        hasWidePlateau = plateauBins > 12;
+        
+        % Combined uniform test
+        isUniform = isFlat && isLowKurt && hasWidePlateau && ~isSaltPepper && ~isSpeckle;
+        
+        % ===========================================================
+        % FINAL DECISION
+        % ===========================================================
+        % Priority: Salt&Pepper > Speckle > Gaussian > Uniform
+        if isSaltPepper
+            out = 'salt_pepper';
+        elseif isSpeckle
+            out = 'speckle';
+        elseif isGaussian
+            out = 'gaussian';
+        elseif isUniform
+            out = 'uniform';
+        else
+            out = 'none';
         end
-        
-        % Specific tests
-        saltPepperScore = sum(img(:) < 0.05) / numel(img) + sum(img(:) > 0.95) / numel(img);
-        impulseRatio = sum(abs(img - medfilt2(img, [3 3])) > 0.3, 'all') / numel(img);
-        
-        isSaltPepper = (saltPepperScore > 0.01) && (impulseRatio > 0.01) && isBimodal;
-        isGaussian = isAdditive && isSymmetric && isGaussianKurt && hasCentralPeak && (noiseVar > 0.0001);
-        isUniform = isAdditive && isSymmetric && isUniformKurt && isFlat;
-        isPoisson = (isPoisson || isPoissonRatio) && ~isAdditive && ~isSaltPepper;
-        isSpeckle = (isSpeckle || isSpeckleRatio) && ~isAdditive && ~isSaltPepper && ~isPoisson;
-        
-        % Final decision
-        if isSaltPepper, out = 'salt_pepper';
-        elseif isUniform, out = 'uniform';
-        elseif isSpeckle, out = 'speckle';
-        elseif isPoisson, out = 'poisson';
-        elseif isGaussian, out = 'gaussian';
-        else, out = 'none';
-        end
-        
+
     catch ME
-        fprintf('ERROR: %s\n', ME.message);
-        out = 'error';
+        disp("ERROR in detect_noise_type:");
+        disp(getReport(ME));
+        out = 'none';
     end
 end

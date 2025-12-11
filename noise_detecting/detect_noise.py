@@ -58,7 +58,7 @@ def detect_noise_ml(img_path):
 
 
 def extract_features_matlab(img_path):
-    """Extract 23 features using MATLAB extract_features.m"""
+    """Extract 29 features using MATLAB extract_features.m"""
     
     script_dir = Path(__file__).parent.resolve()
     extract_features_path = script_dir.parent / 'training' / 'extract_features.m'
@@ -106,7 +106,9 @@ def extract_features_matlab(img_path):
         #        quadratic_a, has_central_peak, histogram_flatness, bimodal_extreme_ratio,
         #        kurtosis, skewness, noise_variance, var_mean_ratio, var_mean_squared_ratio,
         #        salt_pepper_score, impulse_ratio, median_diff_variance, dct_dc_energy,
-        #        dct_ac_energy, edge_variance, peak_intensity, min_intensity, entropy
+        #        dct_ac_energy, edge_variance, peak_intensity, min_intensity, entropy,
+        #        cv_consistency, multiscale_gaussian_score, residual_histogram_flatness,
+        #        residual_kurtosis, histogram_cv, histogram_peak_ratio
         
         feature_order = [
             'r2_linear', 'r2_quadratic', 'variance_coefficient', 'linear_slope', 
@@ -114,7 +116,9 @@ def extract_features_matlab(img_path):
             'bimodal_extreme_ratio', 'kurtosis', 'skewness', 'noise_variance',
             'var_mean_ratio', 'var_mean_squared_ratio', 'salt_pepper_score',
             'impulse_ratio', 'median_diff_variance', 'dct_dc_energy', 'dct_ac_energy',
-            'edge_variance', 'peak_intensity', 'min_intensity', 'entropy'
+            'edge_variance', 'peak_intensity', 'min_intensity', 'entropy',
+            'cv_consistency', 'multiscale_gaussian_score', 'residual_histogram_flatness',
+            'residual_kurtosis', 'histogram_cv', 'histogram_peak_ratio'
         ]
         
         features_list = [features_dict[key] for key in feature_order]
@@ -150,9 +154,26 @@ def detect_noise_matlab(img_path):
         capture_output=True, text=True
     )
 
+    # Debug: print MATLAB output
+    if result.stdout:
+        print("=== MATLAB OUTPUT ===")
+        print(result.stdout)
+        print("=== END MATLAB OUTPUT ===")
+    
+    if result.stderr:
+        print("=== MATLAB ERRORS ===")
+        print(result.stderr)
+        print("=== END MATLAB ERRORS ===")
+
     # Extract last printed line
     lines = result.stdout.strip().splitlines()
-    return lines[-1]
+    if lines:
+        detected = lines[-1].strip()
+        print(f"Detected noise type: {detected}")
+        return detected
+    else:
+        print("ERROR: No output from MATLAB")
+        return 'none'
 
 
 def process_folder(folder_path, use_ml=True):
