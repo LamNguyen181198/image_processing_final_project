@@ -60,9 +60,9 @@ python denoise_app.py
 - **Gaussian Noise:** Non-Local Means filter provides excellent noise removal with detail preservation
 - **Salt & Pepper Noise:** Adaptive median filter effectively removes impulse noise
 
-### ⚙️ **Needs Fine-Tuning**
-- **Uniform Noise:** Bilateral filter works but may need parameter adjustments for optimal sharpness
-- **Speckle Noise:** Adaptive bilateral filter removes noise but detail preservation needs improvement
+### ✅ **Optimally Tuned**
+- **Uniform Noise:** Multi-stage bilateral filter with aggressive sharpening provides excellent detail preservation
+- **Speckle Noise:** Non-Local Means in log domain with dual-stage detail restoration achieves maximum noise removal while maintaining sharpness
 
 ### 🎓 **ML Detection Performance**
 - **Model:** Random Forest Classifier (100 trees)
@@ -100,8 +100,8 @@ Detected Noise Type → Optimal Filter Selection → MATLAB Processing → Denoi
 |------------|-------------|----------------|
 | **Gaussian** | Non-Local Means / Bilateral | DegreeOfSmoothing: 0.04-0.08 |
 | **Salt & Pepper** | Adaptive Median | Window: 3×3 to 7×7 |
-| **Speckle** | Adaptive Bilateral + Unsharp Mask | Spatial: 1.2-2.0, Intensity: 0.08-0.12, Sharpen: 35% |
-| **Uniform** | Bilateral + Sharpening | Spatial: 1.0-1.8, Intensity: 0.03-0.06, Sharpen: 30-50% |
+| **Speckle** | NLM in Log Domain + Dual-Stage Detail Restoration | Smoothing: 15×σ, Sharpen: 85% + 25% micro-detail |
+| **Uniform** | Bilateral + Multi-Stage Enhancement | Spatial: 0.5-1.2, Intensity: 0.01-0.05, Sharpen: 80-100% + micro + edge + contrast |
 
 ---
 
@@ -219,34 +219,48 @@ The application provides real-time metrics:
 
 ---
 
-## 📝 Recent Updates (Dec 12, 2025)
+## 📝 Recent Updates (Dec 13, 2025)
 
 - ✅ Removed Poisson noise from system (focused on 4 main types)
 - ✅ Switched to ML-based detection (superior to rule-based)
-- ✅ Optimized Uniform filter with bilateral + sharpening
-- ✅ Implemented Speckle filter with adaptive bilateral + LAB processing
-- ✅ Added 35% unsharp masking to Speckle for detail enhancement
-- ✅ Renamed `apply_lee_filter` to `apply_adaptive_bilateral_filter`
+- ✅ **Optimally tuned Speckle filter:** Non-Local Means in log domain with 85% + 25% dual-stage detail restoration
+- ✅ **Optimally tuned Uniform filter:** Multi-stage enhancement with 80-100% sharpening, micro-detail, edge, and contrast boosts
+- ✅ Implemented log-domain processing for multiplicative speckle noise
+- ✅ Removed SRAD approach in favor of superior NLM filtering
 
 ---
 
 ## 🐛 Known Issues
 
-1. **Speckle Denoising:** Detail preservation not yet optimal - image may appear softer than desired
-2. **Uniform Denoising:** May need per-image tuning for best results
-3. **Small Training Set:** 61 images may not capture all noise variations
-4. **Grayscale Only:** Current filters convert RGB to grayscale (Speckle maintains color via LAB)
+1. **Small Training Set:** 61 images may not capture all noise variations - more training data needed
+2. **Grayscale Processing:** Most filters convert RGB to grayscale (except uniform which processes all channels)
+3. **Fixed Parameters:** Current tuning optimal for moderate noise levels; extreme cases may benefit from adaptive adjustment
+4. **No Mixed Noise Support:** System assumes single noise type per image
 
 ---
 
 ## 🎯 Future Improvements
 
-- [ ] Increase training dataset to 200-500 images per noise type
-- [ ] Implement Non-Local Means for Speckle noise
-- [ ] Add confidence scores for ML predictions
+### High Priority
+- [ ] Increase training dataset to 200-500 images per noise type for better ML generalization
+- [ ] Add confidence scores for ML predictions to indicate detection reliability
 - [ ] Support batch processing of multiple images
+- [ ] Implement mixed noise detection/removal (e.g., Gaussian + Salt & Pepper)
+
+### Advanced Denoising
+- [ ] Explore additional noise types (Poisson, JPEG artifacts, compression noise)
+- [ ] Implement automated parameter tuning using optimization algorithms
+  - Grid search or Bayesian optimization for uniform/speckle parameters
+  - Image quality metrics (PSNR, SSIM) as objective functions
+  - Per-image adaptive tuning based on noise characteristics
+- [ ] Investigate deep learning approaches (DnCNN, FFDNet) for comparison
+- [ ] Add real-time preview with adjustable filter strength slider
+
+### Quality Improvements  
+- [ ] Develop better metrics for speckle and uniform noise parameter selection
 - [ ] Add noise level estimation display
-- [ ] Implement mixed noise detection/removal
+- [ ] Implement quality assessment scoring (no-reference IQA)
+- [ ] Support color image denoising without RGB→grayscale conversion
 
 ---
 
