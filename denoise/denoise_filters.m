@@ -10,10 +10,10 @@ function denoised = denoise_filters(imgPath, noiseType)
     %   denoised - Denoised image (grayscale, double precision [0,1])
     %
     % Optimal filters for each noise type:
-    %   - gaussian: Gaussian filter (sigma=1.5)
-    %   - salt_pepper: Median filter (5x5)
-    %   - speckle: Lee filter (5x5)
-    %   - uniform: Wiener filter
+    %   - gaussian: Non-Local Means filter (adaptive smoothing)
+    %   - salt_pepper: Adaptive Median filter (3x3 to 7x7)
+    %   - speckle: Non-Local Means in log domain + detail restoration
+    %   - uniform: Bilateral filter + multi-stage sharpening
     %   - clean: No filtering (return original)
     
     try
@@ -35,8 +35,8 @@ function denoised = denoise_filters(imgPath, noiseType)
                 denoised = apply_median_filter(img);
                 
             case 'speckle'
-                % Speckle noise: Adaptive Bilateral Filter
-                denoised = apply_adaptive_bilateral_filter(img);
+                % Speckle noise: Non-Local Means in log domain + detail restoration
+                denoised = apply_speckle_filter(img);
                 
             case 'uniform'
                 % Uniform noise: Bilateral filter (preserves edges better than Wiener)
@@ -71,17 +71,20 @@ function denoised = apply_gaussian_filter(img)
     noiseStd = estimate_noise_std(img);
     fprintf('  Estimated noise std: %.4f\n', noiseStd);
     
-    % Use gentle filtering to avoid oil painting effect
+    % Adaptive filtering based on measured noise level
     if exist('imnlmfilt', 'file')
-        % Non-Local Means: best balance of noise reduction and detail
-        DegreeOfSmoothing = min(noiseStd * 1.5, 0.08);
+        % Non-Local Means: scale smoothing directly with noise level
+        % Formula: DegreeOfSmoothing proportional to noise variance
+        DegreeOfSmoothing = min(noiseStd * noiseStd * 15, 0.12);
+        DegreeOfSmoothing = max(DegreeOfSmoothing, 0.01);  % Minimum smoothing
         fprintf('  Using Non-Local Means (smoothing=%.4f)\n', DegreeOfSmoothing);
         denoised = imnlmfilt(img, 'DegreeOfSmoothing', DegreeOfSmoothing);
     elseif exist('imbilatfilt', 'file')
-        % Bilateral filter: preserves edges better
+        % Bilateral filter: scale with noise level
         fprintf('  Using bilateral filter\n');
-        intensitySigma = min(noiseStd * 1.2, 0.10);
-        spatialSigma = 2.5;
+        intensitySigma = min(noiseStd * 1.5, 0.12);
+        spatialSigma = min(1.5 + noiseStd * 8, 3.0);  % Adaptive spatial range
+        fprintf('  Bilateral params: intensity=%.4f, spatial=%.2f\n', intensitySigma, spatialSigma);
         denoised = imbilatfilt(img, intensitySigma, spatialSigma);
     else
         % Gentle Gaussian - single pass to preserve details
@@ -117,158 +120,132 @@ function denoised = apply_median_filter(img)
     denoised = medfilt2(img, [windowSize windowSize], 'symmetric');
 end
 
+function denoised = apply_speckle_filter(img)
+    % --- Speckle removal using log-domain Non-Local Means ---
+    % Multiplicative speckle noise is converted to additive via log transform
+    % Non-Local Means (primary) or bilateral filter (fallback) applied in log domain
+    % Aggressive detail restoration compensates for smoothing
 
-function denoised = apply_adaptive_bilateral_filter(img)
-    % Adaptive bilateral filter for speckle noise with luminance processing
-    fprintf('Applying adaptive bilateral filter for speckle...\n');
-    
     img = im2double(img);
-    [rows, cols, channels] = size(img);
+    if size(img,3)==3
+        img = rgb2gray(img);
+    end
+    img = max(img, eps);
+
+    fprintf("Applying SPECKLE filter...\n");
+
+    % Estimate speckle strength
+    sigma = estimate_noise_std(img);
+    fprintf("  Estimated sigma = %.4f\n", sigma);
+
+    % ---- Convert multiplicative noise → additive ----
+    logI = log(img);
+
+    % ------------------------------------------------------
+    % Log-domain filtering for multiplicative speckle noise
+    % ------------------------------------------------------
     
-    if channels == 3
-        % Convert to LAB color space for separate luminance processing
-        lab = rgb2lab(img);
-        L = lab(:,:,1);  % Luminance
-        A = lab(:,:,2);  % Color channel a
-        B = lab(:,:,3);  % Color channel b
+    % Try Non-Local Means in log domain first (best approach)
+    if exist('imnlmfilt', 'file')
+        fprintf("  Using Non-Local Means in log domain...\n");
+        logI = log(img);
         
-        fprintf('  Processing luminance and color channels separately\n');
+        % Maximum effective smoothing for speckle removal
+        DegreeOfSmoothing = min(sigma * 15, 0.20);
+        DegreeOfSmoothing = max(DegreeOfSmoothing, 0.10);
         
-        % Estimate noise level from luminance
-        noiseStd = estimate_noise_std(L / 100);  % Normalize L to [0,1]
+        fprintf("  NLM smoothing = %.4f\n", DegreeOfSmoothing);
+        logDenoised = imnlmfilt(logI, 'DegreeOfSmoothing', DegreeOfSmoothing);
+        denoised = exp(logDenoised);
+        denoised = max(0, min(1, denoised));
+    
+    % Fallback: Multi-pass bilateral in log domain
+    elseif exist('imbilatfilt', 'file')
+        fprintf("  Using bilateral filtering in log domain...\n");
+        logI = log(img);
         
-        % Adaptive bilateral parameters based on noise level
-        if noiseStd > 0.05
-            spatialSigma = 2.0;
-            intensitySigma = 0.12;
-        elseif noiseStd > 0.03
-            spatialSigma = 1.5;
-            intensitySigma = 0.10;
-        else
-            spatialSigma = 1.2;
-            intensitySigma = 0.08;
-        end
+        % Very strong smoothing
+        intensitySigma = sigma * 3.5;
+        spatialSigma = 3.5;
+        logDenoised = imbilatfilt(logI, intensitySigma, spatialSigma);
         
-        fprintf('  Noise level: %.4f, Spatial: %.2f, Intensity: %.3f\n', ...
-                noiseStd, spatialSigma, intensitySigma);
+        % Second pass for residual noise
+        intensitySigma2 = sigma * 2.0;
+        logDenoised = imbilatfilt(logDenoised, intensitySigma2, spatialSigma);
         
-        % Denoise luminance channel with adaptive bilateral
-        L_normalized = L / 100;  % Normalize to [0,1]
-        L_denoised = imbilatfilt(L_normalized, intensitySigma, spatialSigma);
-        
-        % Gentle denoising on color channels (preserve color information)
-        A_denoised = imbilatfilt(A, intensitySigma * 0.5, spatialSigma);
-        B_denoised = imbilatfilt(B, intensitySigma * 0.5, spatialSigma);
-        
-        % Apply stronger unsharp mask to luminance for detail enhancement
-        sharpenAmount = 0.35;  % 35% sharpening for better detail
-        blurred = imgaussfilt(L_denoised, 0.8);
-        L_sharpened = L_denoised + sharpenAmount * (L_denoised - blurred);
-        L_sharpened = max(0, min(1, L_sharpened));  % Clamp to valid range
-        
-        fprintf('  Applied unsharp mask (%.1f%% sharpening)\n', sharpenAmount * 100);
-        
-        % Reconstruct LAB image
-        lab_denoised = cat(3, L_sharpened * 100, A_denoised, B_denoised);
-        
-        % Convert back to RGB
-        denoised = lab2rgb(lab_denoised);
-        
+        denoised = exp(logDenoised);
+        denoised = max(0, min(1, denoised));
+        fprintf("  Applied 2-pass bilateral filtering\n");
+    
+    % Last resort: SRAD
     else
-        % Grayscale processing
-        noiseStd = estimate_noise_std(img);
-        
-        if noiseStd > 0.05
-            spatialSigma = 2.0;
-            intensitySigma = 0.12;
-        elseif noiseStd > 0.03
-            spatialSigma = 1.5;
-            intensitySigma = 0.10;
-        else
-            spatialSigma = 1.2;
-            intensitySigma = 0.08;
-        end
-        
-        fprintf('  Noise level: %.4f, Spatial: %.2f, Intensity: %.3f\n', ...
-                noiseStd, spatialSigma, intensitySigma);
-        
-        % Apply adaptive bilateral filter
-        denoised = imbilatfilt(img, intensitySigma, spatialSigma);
-        
-        % Apply stronger unsharp mask for detail enhancement
-        sharpenAmount = 0.35;  % 35% sharpening
-        blurred = imgaussfilt(denoised, 0.8);
-        denoised = denoised + sharpenAmount * (denoised - blurred);
-        
-        fprintf('  Applied unsharp mask (%.1f%% sharpening)\n', sharpenAmount * 100);
+        fprintf("  Using SRAD (35 iterations)...\n");
+        denoised = srad_filter(img, 35, 0.20, 0.5);
     end
     
-    % Ensure output is in valid range
-    denoised = max(0, min(1, denoised));
+    % Very aggressive detail restoration to compensate for strong smoothing
+    blurred = imgaussfilt(denoised, 1.0);
+    denoised = denoised + 0.85 * (denoised - blurred);
     
-    fprintf('  Speckle denoising complete\n');
+    % Additional micro-detail boost
+    microBlur = imgaussfilt(denoised, 0.6);
+    denoised = denoised + 0.25 * (denoised - microBlur);
+    denoised = max(0, min(1, denoised));
+    fprintf("  Applied detail restoration\n");
+    return;
 end
 
 
-function denoised = apply_wiener_filter(img)
-    % Adaptive Wiener filter for uniform noise
-    fprintf('Applying adaptive Wiener filter...\n');
-    
-    % Estimate noise variance
-    noise_std = estimate_noise_std(img);
-    noise_var = noise_std^2;
-    
-    fprintf('  Estimated noise std: %.4f\n', noise_std);
-    
-    % Adaptive window size based on noise level
-    if noise_var > 0.003
-        windowSize = [9 9];  % Larger window for heavy noise
-    elseif noise_var > 0.001
-        windowSize = [7 7];  % Medium-large window
-    elseif noise_var > 0.0003
-        windowSize = [5 5];  % Medium window
-    else
-        windowSize = [3 3];  % Small window for light noise
+function out = srad_filter(I, numIter, deltaT, q0)
+    I = im2double(I);
+    out = I;
+
+    for t = 1:numIter
+        north = [out(1,:); out(1:end-1,:)] - out;
+        south = [out(2:end,:); out(end,:)] - out;
+        east  = [out(:,2:end), out(:,end)] - out;
+        west  = [out(:,1), out(:,1:end-1)] - out;
+
+        grad2 = (north.^2 + south.^2 + east.^2 + west.^2);
+        lap   = north + south + east + west;
+
+        q = sqrt( abs(0.5*(grad2./(out.^2)) - ((lap./out).^2) ./ (1 + out.^2)) );
+        c = 1 ./ (1 + ((q.^2 - q0)./(q0 + eps)));
+        c = max(0, min(1, c));
+
+        div = c.*north + c.*south + c.*east + c.*west;
+        out = out + deltaT * div;
+        out = max(0, min(1, out));
     end
-    
-    fprintf('  Using window size: %dx%d\n', windowSize(1), windowSize(2));
-    
-    % Apply Wiener filter with estimated noise
-    denoised = wiener2(img, windowSize, noise_var);
 end
 
 
 function denoised = apply_bilateral_for_uniform(img)
-    % Conservative bilateral filter optimized for uniform noise
-    % Minimal smoothing to preserve sharpness
-    fprintf('Applying conservative bilateral filter for uniform noise...\n');
+    % Enhanced bilateral filter for uniform noise with edge-preserving sharpening
+    fprintf('Applying enhanced bilateral filter for uniform noise...\n');
     
     % Estimate noise level
     noise_std = estimate_noise_std(img);
     fprintf('  Noise level: %.4f\n', noise_std);
     
-    % Very conservative bilateral parameters - prioritize sharpness
-    if noise_std > 0.05
-        % Heavy noise - still keep it gentle
-        spatialSigma = 1.8;
-        intensitySigma = 0.06;
-        sharpenAmount = 0.3;
-        fprintf('  Heavy uniform noise: bilateral(%.1f, %.3f)\n', spatialSigma, intensitySigma);
-    elseif noise_std > 0.03
-        % Moderate noise
-        spatialSigma = 1.3;
-        intensitySigma = 0.04;
-        sharpenAmount = 0.4;
-        fprintf('  Moderate uniform noise: bilateral(%.1f, %.3f)\n', spatialSigma, intensitySigma);
-    else
-        % Light noise - minimal filtering
-        spatialSigma = 1.0;
-        intensitySigma = 0.03;
-        sharpenAmount = 0.5;
-        fprintf('  Light uniform noise: bilateral(%.1f, %.3f)\n', spatialSigma, intensitySigma);
-    end
+    % Very light bilateral filtering - minimal smoothing
+    % Prioritize edge and detail preservation over noise removal
+    spatialSigma = min(0.5 + (noise_std * 8), 1.2);
+    spatialSigma = max(spatialSigma, 0.5);
     
-    % Apply single-pass bilateral filter (no second pass to avoid blur)
+    % Very low intensity sigma - strong edge preservation
+    intensitySigma = min(0.01 + (noise_std * 0.4), 0.05);
+    intensitySigma = max(intensitySigma, 0.01);
+    
+    % Aggressive sharpening for maximum detail pop
+    sharpenAmount = max(0.8, min(1.0 - (noise_std * 1.5), 1.0));
+    sharpenRadius = 1.0;  % Tighter radius for crisp details
+    
+    fprintf('  Bilateral params: spatial=%.2f, intensity=%.3f\n', ...
+            spatialSigma, intensitySigma);
+    fprintf('  Sharpening: amount=%.2f, radius=%.2f\n', sharpenAmount, sharpenRadius);
+    
+    % Apply very light bilateral filter
     if exist('imbilatfilt', 'file')
         denoised = imbilatfilt(img, intensitySigma, spatialSigma);
     else
@@ -278,98 +255,70 @@ function denoised = apply_bilateral_for_uniform(img)
         denoised = wiener2(img, windowSize);
     end
     
-    % Apply unsharp masking to enhance details
+    % Stage 1: Strong primary sharpening for detail pop
     if exist('imsharpen', 'file')
-        denoised = imsharpen(denoised, 'Radius', 1.5, 'Amount', sharpenAmount);
-        fprintf('  Applied detail enhancement (amount=%.1f)\n', sharpenAmount);
+        denoised = imsharpen(denoised, 'Radius', sharpenRadius, 'Amount', sharpenAmount);
+        fprintf('  Applied primary sharpening (amount=%.2f)\n', sharpenAmount);
     else
-        % Manual unsharp mask
-        blurred = imgaussfilt(denoised, 1.0);
+        % Manual unsharp mask with tight radius
+        blurred = imgaussfilt(denoised, sharpenRadius * 0.7);
         highPass = denoised - blurred;
         denoised = denoised + sharpenAmount * highPass;
         denoised = max(0, min(1, denoised));
-        fprintf('  Applied manual sharpening (amount=%.1f)\n', sharpenAmount);
-    end
-end
-
-
-function denoised = apply_bilateral_filter(img)
-    % Improved bilateral filter for JPEG blocking artifacts
-    fprintf('Applying adaptive Bilateral filter...\n');
-    
-    % Detect JPEG artifact severity by analyzing block boundaries
-    artifact_strength = detect_blocking_artifacts(img);
-    
-    % Adaptive parameters based on artifact strength
-    if artifact_strength > 0.015
-        % Heavy JPEG artifacts
-        spatialSigma = 2.5;
-        intensitySigma = 0.12;
-        fprintf('  Heavy artifacts detected: strong filtering\n');
-    elseif artifact_strength > 0.008
-        % Moderate artifacts
-        spatialSigma = 2.0;
-        intensitySigma = 0.08;
-        fprintf('  Moderate artifacts detected: medium filtering\n');
-    else
-        % Light artifacts
-        spatialSigma = 1.5;
-        intensitySigma = 0.05;
-        fprintf('  Light artifacts detected: gentle filtering\n');
+        fprintf('  Applied manual sharpening (amount=%.2f)\n', sharpenAmount);
     end
     
-    % Check if Image Processing Toolbox has imbilatfilt
-    if exist('imbilatfilt', 'file')
-        denoised = imbilatfilt(img, intensitySigma, spatialSigma);
-    else
-        % Fallback: Use custom bilateral filter implementation
-        denoised = bilateral_filter_custom(img, spatialSigma, intensitySigma);
+    % Stage 2: Micro-detail enhancement for texture pop
+    % Use smaller Gaussian to capture fine details
+    microBlurred = imgaussfilt(denoised, 0.5);
+    microDetail = denoised - microBlurred;
+    microEnhance = 0.4;  % 40% micro-detail boost
+    denoised = denoised + microEnhance * microDetail;
+    denoised = max(0, min(1, denoised));
+    fprintf('  Applied micro-detail enhancement (%.1f%%)\n', microEnhance * 100);
+    
+    % Stage 3: Edge contrast boost for outline definition
+    if noise_std < 0.06
+        % Detect edges using Sobel
+        [Gx, Gy] = gradient(denoised);
+        edgeMag = sqrt(Gx.^2 + Gy.^2);
+        
+        % Create strong edge mask
+        edgeMask = edgeMag / (max(edgeMag(:)) + eps);
+        edgeMask = edgeMask .^ 0.3;  % More aggressive masking
+        
+        % Edge contrast enhancement using local contrast
+        edgeBoost = 0.25;  % 25% edge boost
+        localContrast = imgaussfilt(denoised, 0.6) - imgaussfilt(denoised, 2.0);
+        denoised = denoised + edgeBoost * edgeMask .* localContrast;
+        denoised = max(0, min(1, denoised));
+        fprintf('  Applied edge contrast boost (%.1f%%)\n', edgeBoost * 100);
     end
-end
-
-
-function denoised = bilateral_filter_custom(img, spatialSigma, intensitySigma)
-    % Custom bilateral filter implementation
     
-    % Window size based on spatial sigma
-    windowSize = ceil(3 * spatialSigma) * 2 + 1;
-    halfWindow = floor(windowSize / 2);
-    
-    [rows, cols] = size(img);
-    denoised = zeros(rows, cols);
-    
-    % Pad image
-    imgPadded = padarray(img, [halfWindow halfWindow], 'replicate');
-    
-    % Create spatial Gaussian kernel
-    [X, Y] = meshgrid(-halfWindow:halfWindow, -halfWindow:halfWindow);
-    spatialKernel = exp(-(X.^2 + Y.^2) / (2 * spatialSigma^2));
-    
-    for i = 1:rows
-        for j = 1:cols
-            % Extract local window
-            window = imgPadded(i:i+windowSize-1, j:j+windowSize-1);
-            
-            % Center pixel
-            centerPixel = imgPadded(i+halfWindow, j+halfWindow);
-            
-            % Intensity/range weights
-            intensityDiff = window - centerPixel;
-            intensityKernel = exp(-(intensityDiff.^2) / (2 * intensitySigma^2));
-            
-            % Combine spatial and intensity kernels
-            bilateralKernel = spatialKernel .* intensityKernel;
-            
-            % Normalize and apply
-            denoised(i, j) = sum(window(:) .* bilateralKernel(:)) / sum(bilateralKernel(:));
-        end
-    end
+    % Stage 4: Global contrast adjustment for overall pop
+    % Subtle contrast stretch to make details stand out
+    contrastAmount = 0.15;  % 15% contrast increase
+    mid = 0.5;
+    denoised = mid + (1 + contrastAmount) * (denoised - mid);
+    denoised = max(0, min(1, denoised));
+    fprintf('  Applied global contrast enhancement (%.1f%%)\n', contrastAmount * 100);
 end
 
 
 % ========================================================================
 % Helper Functions for Noise Estimation
 % ========================================================================
+
+function sigma = estimate_noise_std_rgb(img)
+    % Robust noise estimate for color images:
+    % Use luminance high-frequency MAD from Laplacian across channels
+    if size(img,3) == 3
+        gray = rgb2gray(img);
+    else
+        gray = img;
+    end
+    sigma = estimate_noise_std(gray);
+end
 
 function noise_std = estimate_noise_std(img)
     % Estimate noise standard deviation using median absolute deviation

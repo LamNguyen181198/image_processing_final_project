@@ -522,10 +522,10 @@ class DenoiseApp:
         
         # Update filter info
         filter_map = {
-            'gaussian': 'Gaussian Filter (σ=1.5)',
-            'salt_pepper': 'Median Filter (5×5)',
-            'speckle': 'Lee Filter (5×5)',
-            'uniform': 'Wiener Filter',
+            'gaussian': 'Non-Local Means / Bilateral',
+            'salt_pepper': 'Adaptive Median Filter',
+            'speckle': 'NLM in Log Domain + Detail Restoration',
+            'uniform': 'Bilateral + Multi-Stage Enhancement',
             'jpeg_artifact': 'Bilateral Filter',
             'clean': 'No filtering applied'
         }
