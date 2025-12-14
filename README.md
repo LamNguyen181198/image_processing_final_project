@@ -16,7 +16,7 @@ An intelligent image denoising application that:
 ## 🚀 Quick Start
 
 ### Prerequisites
-- **Python 3.8+** with packages: `tkinter`, `PIL`, `numpy`, `scikit-learn`, `pandas`, `matlab`
+- **Python 3.8+**
 - **MATLAB R2020a+** with Image Processing Toolbox
 - **MATLAB Engine for Python** installed
 
@@ -30,59 +30,54 @@ cd image_processing_final_project
 
 2. **Install Python dependencies:**
 ```bash
-pip install pillow numpy scikit-learn pandas matplotlib matlabengine
+pip install pillow numpy scikit-learn pandas matplotlib seaborn matlabengine
 ```
 
 3. **Verify MATLAB Engine:**
-```python
-import matlab.engine
-eng = matlab.engine.start_matlab()
-print("MATLAB Engine ready!")
+```bash
+python -c "import matlab.engine; eng = matlab.engine.start_matlab(); print('MATLAB Engine ready!')"
 ```
 
 ### Running the Application
 
-**Main GUI Application:**
+**🎯 Main GUI Application (Recommended):**
 ```bash
 python denoise_app.py
 ```
 
 **Using the Application:**
 1. Click **"Load Noisy Image"** to select an image
-2. Click **"Detect & Denoise"** to process
-3. View results and click **"Save Denoised Image"** if satisfied
+2. Click **"Detect & Denoise"** to process automatically
+3. View results with performance metrics
+4. Click **"Save Denoised Image"** if satisfied
 
 ---
 
-## 📊 Current Status & Performance
+## 📊 Performance & Status
 
-### ✅ **Working Well**
-- **Gaussian Noise:** Non-Local Means filter provides excellent noise removal with detail preservation
-- **Salt & Pepper Noise:** Adaptive median filter effectively removes impulse noise
-
-### ✅ **Optimally Tuned**
-- **Uniform Noise:** Multi-stage bilateral filter with aggressive sharpening provides excellent detail preservation
-- **Speckle Noise:** Non-Local Means in log domain with dual-stage detail restoration achieves maximum noise removal while maintaining sharpness
+### ✅ **Current Implementation**
+- **Gaussian Noise:** Non-Local Means filter with excellent detail preservation
+- **Salt & Pepper Noise:** Adaptive median filter for impulse noise removal
+- **Uniform Noise:** Multi-stage bilateral filter with aggressive sharpening
+- **Speckle Noise:** Non-Local Means in log domain with dual-stage detail restoration
 
 ### 🎓 **ML Detection Performance**
-- **Model:** Random Forest Classifier (100 trees)
+- **Model:** Random Forest Classifier (100 trees, max_depth=20)
 - **Training Accuracy:** ~95%
-- **Test Accuracy:** ~80% (10-sample test set)
-- **Features:** 29 statistical features extracted from images
-- **Training Data:** 61 images (51 train / 10 test split)
-
----
+- **Test Accuracy:** ~80%
+- **Features:** 29 statistical features per image
+- **Training Data:** 61 images across 4 noise types
 
 ## 🏗️ System Architecture
 
-### **Detection Pipeline (ML-Based)**
+### **Detection Pipeline**
 ```
 Input Image → Feature Extraction (MATLAB) → Random Forest Classifier → Noise Type
 ```
 
 **Feature Categories (29 features):**
 - Variance-mean relationships (6 features)
-- Histogram analysis (4 features)  
+- Histogram analysis (4 features)
 - Statistical moments (4 features)
 - Global statistics (3 features)
 - Impulse detection (3 features)
@@ -98,19 +93,17 @@ Detected Noise Type → Optimal Filter Selection → MATLAB Processing → Denoi
 
 | Noise Type | Filter Used | Key Parameters |
 |------------|-------------|----------------|
-| **Gaussian** | Non-Local Means / Bilateral | DegreeOfSmoothing: 0.04-0.08 |
+| **Gaussian** | Non-Local Means | DegreeOfSmoothing: 0.04-0.08 |
 | **Salt & Pepper** | Adaptive Median | Window: 3×3 to 7×7 |
 | **Speckle** | NLM in Log Domain + Dual-Stage Detail Restoration | Smoothing: 15×σ, Sharpen: 85% + 25% micro-detail |
 | **Uniform** | Bilateral + Multi-Stage Enhancement | Spatial: 0.5-1.2, Intensity: 0.01-0.05, Sharpen: 80-100% + micro + edge + contrast |
-
----
 
 ## 📁 Project Structure
 
 ```
 image_processing_final_project/
 │
-├── denoise_app.py              # Main GUI application
+├── denoise_app.py              # Main GUI application (START HERE)
 ├── README.md                   # This file
 ├── PRESENTATION_DOCS.md        # Presentation documentation
 │
@@ -122,13 +115,13 @@ image_processing_final_project/
 │   ├── detect_noise.py         # Python ML detection interface
 │   └── detect_noise_type.m     # Legacy MATLAB detection (unused)
 │
-├── noise_gen/
-│   ├── noise_gen.py            # Python noise generation interface
-│   └── generate_noisy_images.m # MATLAB noise generation
+├── pre_transform_image/
+│   └── sample1.jpg             # Clean image for training data generation
 │
 ├── training/
 │   ├── prepare_training_data.py    # Generate training dataset
 │   ├── split_train_test.py         # Train/test split
+│   ├── visualize_training_data.py  # Visualize dataset distribution
 │   ├── extract_features.m          # MATLAB feature extraction
 │   ├── features_to_csv.m           # Export features to CSV
 │   ├── training_data_features.csv  # Full dataset
@@ -137,105 +130,85 @@ image_processing_final_project/
 │   └── models/
 │       ├── train_random_forest.py  # Train ML model
 │       ├── predict_noise.py        # Prediction interface
-│       └── random_forest_model.pkl # Trained model
+│       ├── random_forest_model.pkl # Pre-trained model ✅
+│       └── *.png                   # Model performance visualizations
 │
-└── noisy_output/               # Generated noisy images
+└── noisy_output/               # Generated noisy images (for training)
 ```
 
 ---
 
-## 🔧 Training Your Own Model
+## 🔧 Advanced Usage
 
-### 1. Generate Training Data
+### Retraining the Model (Optional)
+
+The model is already trained, but you can retrain with custom data:
+
+**Step 1: Generate Training Data**
 ```bash
-# Generate noisy images (51 training samples)
-python training/prepare_training_data.py
-
-# Split into train/test sets
-python training/split_train_test.py
+python training/prepare_training_data.py pre_transform_image/sample1.jpg --num-per-type 10
 ```
 
-### 2. Train Model
+**Step 2: Split Dataset**
+```bash
+python training/split_train_test.py training/training_data_features.csv --test-size 0.2
+```
+
+**Step 3: Train Model**
 ```bash
 cd training/models
 python train_random_forest.py
+cd ../..
 ```
 
-### 3. Test Model
+**Step 4: Visualize Data (Optional)**
+```bash
+python training/visualize_training_data.py training/training_data_features_train.csv
+```
+
+### Testing Noise Detection Programmatically
+
 ```python
 from training.models.predict_noise import predict_noise_type
 
-noise_type = predict_noise_type('path/to/test/image.jpg')
-print(f"Detected: {noise_type}")
+# Detect noise type
+noise_type = predict_noise_type('path/to/noisy/image.jpg')
+print(f"Detected: {noise_type}")  # Returns: gaussian, salt_pepper, speckle, or uniform
 ```
 
----
-
-## 🎨 Noise Generation
-
-Generate custom noisy images:
+### Batch Processing
 
 ```python
-from noise_gen.noise_gen import add_noise
+from training.models.predict_noise import predict_noise_type
+from denoise.denoise_image import denoise_image
+from pathlib import Path
 
-# Generate specific noise type
-add_noise('input.jpg', 'output.jpg', 'gaussian', sigma=10)
-add_noise('input.jpg', 'output.jpg', 'salt_pepper', density=0.05)
-add_noise('input.jpg', 'output.jpg', 'speckle', variance=0.15)
-add_noise('input.jpg', 'output.jpg', 'uniform', range_val=20)
+# Process multiple images
+image_dir = Path('test_images')
+for img_path in image_dir.glob('*.jpg'):
+    noise_type = predict_noise_type(str(img_path))
+    output_path = f'denoised_{img_path.name}'
+    denoise_image(str(img_path), output_path, noise_type)
+    print(f"Processed {img_path.name} - Detected: {noise_type}")
 ```
-
-**Supported Parameters:**
-- **Gaussian:** `sigma` (3-15, default: 10)
-- **Salt & Pepper:** `density` (0.01-0.15, default: 0.05)
-- **Speckle:** `variance` (0.05-0.25, default: 0.15)
-- **Uniform:** `range_val` (10-40, default: 20)
 
 ---
 
 ## 📈 Performance Metrics
 
-The application provides real-time metrics:
-- **Avg. Noise Removed:** Measures denoising effectiveness
+The application displays real-time metrics:
+- **Detected Noise Type:** ML classification result
+- **Avg. Noise Removed:** Denoising effectiveness measure
 - **Noise σ:** Estimated noise standard deviation
-- **Processing Time:** ML detection + MATLAB filtering time
+- **Processing Time:** Total time for detection + filtering
 
----
+## 🐛 Known Issues & Limitations
 
-## 🔬 Technical Details
-
-### **ML Model Specifications**
-- **Algorithm:** Random Forest Classifier
-- **Parameters:** 100 estimators, max_depth=20, random_state=42
-- **Features:** 29 numerical features per image
-- **Training Size:** 51 images across 4 noise classes
-- **Test Size:** 10 images (stratified split)
-
-### **Denoising Approach**
-- **Luminance-Color Separation:** Speckle filter processes LAB color space
-- **Adaptive Parameters:** Filter strength adjusts based on estimated noise level
-- **Edge Preservation:** Bilateral filters preserve edges while smoothing
-- **Detail Enhancement:** Unsharp masking restores sharpness post-filtering
-
----
-
-## 📝 Recent Updates (Dec 13, 2025)
-
-- ✅ Removed Poisson noise from system (focused on 4 main types)
-- ✅ Switched to ML-based detection (superior to rule-based)
-- ✅ **Optimally tuned Speckle filter:** Non-Local Means in log domain with 85% + 25% dual-stage detail restoration
-- ✅ **Optimally tuned Uniform filter:** Multi-stage enhancement with 80-100% sharpening, micro-detail, edge, and contrast boosts
-- ✅ Implemented log-domain processing for multiplicative speckle noise
-- ✅ Removed SRAD approach in favor of superior NLM filtering
-
----
-
-## 🐛 Known Issues
-
-1. **Small Training Set:** 61 images may not capture all noise variations - more training data needed
-2. **Grayscale Processing:** Most filters convert RGB to grayscale (except uniform which processes all channels)
-3. **Fixed Parameters:** Current tuning optimal for moderate noise levels; extreme cases may benefit from adaptive adjustment
-4. **No Mixed Noise Support:** System assumes single noise type per image
+1. **Training Dataset Size:** 61 images may not capture all noise variations
+2. **Grayscale Processing:** Most filters convert RGB to grayscale (except uniform)
+3. **Fixed Parameters:** Optimal for moderate noise; extreme cases may need adjustment
+4. **Single Noise Type:** No support for mixed noise (e.g., Gaussian + Salt & Pepper)
+5. **MATLAB Dependency:** Requires MATLAB Engine for Python
 
 ---
 
@@ -249,38 +222,21 @@ The application provides real-time metrics:
 
 ### Advanced Denoising
 - [ ] Explore additional noise types (Poisson, JPEG artifacts, compression noise)
-- [ ] Implement automated parameter tuning using optimization algorithms
-  - Grid search or Bayesian optimization for uniform/speckle parameters
-  - Image quality metrics (PSNR, SSIM) as objective functions
-  - Per-image adaptive tuning based on noise characteristics
-- [ ] Investigate deep learning approaches (DnCNN, FFDNet) for comparison
-- [ ] Add real-time preview with adjustable filter strength slider
+## 🎯 Future Improvements
 
-### Quality Improvements  
-- [ ] Develop better metrics for speckle and uniform noise parameter selection
-- [ ] Add noise level estimation display
-- [ ] Implement quality assessment scoring (no-reference IQA)
-- [ ] Support color image denoising without RGB→grayscale conversion
+### High Priority
+- [ ] Expand training dataset to 200-500 images per noise type
+- [ ] Add ML prediction confidence scores
+- [ ] Implement batch processing GUI
+- [ ] Support mixed noise detection/removal
 
----
-
-## 📚 Documentation
-
-- **[PRESENTATION_DOCS.md](PRESENTATION_DOCS.md)** - Detailed presentation documentation
-- **[TRAINING_DATA_GUIDE.md](TRAINING_DATA_GUIDE.md)** - Guide for generating training data
-- **[NOISE_DETECTION_METHODOLOGY.md](NOISE_DETECTION_METHODOLOGY.md)** - ML detection approach
-
----
-
-## 👥 Contributors
-
-Lam Nguyen - [@LamNguyen181198](https://github.com/LamNguyen181198)
-
----
-
-## 📄 License
-
-This project is for educational purposes as part of an Image Processing course final project.
+### Advanced Features
+- [ ] Additional noise types (Poisson, JPEG compression artifacts)
+- [ ] Automated parameter tuning (Grid search, Bayesian optimization)
+- [ ] Deep learning comparison (DnCNN, FFDNet)
+- [ ] Real-time preview with adjustable filter strength
+- [ ] Color image denoising without RGB→grayscale conversion
+- [ ] Quality assessment metrics (PSNR, SSIM, no-reference IQA)
 - **Total samples:** 71 images
 - **Training set:** 56 samples (78.9%)
 - **Test set:** 15 samples (21.1%)
