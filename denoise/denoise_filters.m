@@ -4,7 +4,7 @@ function denoised = denoise_filters(imgPath, noiseType)
     % Inputs:
     %   imgPath - Path to noisy image
     %   noiseType - Detected noise type: 'gaussian', 'salt_pepper',
-    %               'speckle', 'uniform', 'jpeg_artifact', or 'clean'
+    %               'speckle', 'uniform', or 'clean'
     %
     % Output:
     %   denoised - Denoised image (grayscale, double precision [0,1])
@@ -73,23 +73,41 @@ function denoised = apply_gaussian_filter(img)
     
     % Adaptive filtering based on measured noise level
     if exist('imnlmfilt', 'file')
-        % Non-Local Means: scale smoothing directly with noise level
+        % Non-Local Means: Reduced smoothing to preserve details better
         % Formula: DegreeOfSmoothing proportional to noise variance
-        DegreeOfSmoothing = min(noiseStd * noiseStd * 15, 0.12);
-        DegreeOfSmoothing = max(DegreeOfSmoothing, 0.01);  % Minimum smoothing
+        % Reduced multiplier from 15 to 8 for lighter smoothing
+        DegreeOfSmoothing = min(noiseStd * noiseStd * 8, 0.06);  % Reduced from 0.12 to 0.06
+        DegreeOfSmoothing = max(DegreeOfSmoothing, 0.005);  % Reduced minimum from 0.01
         fprintf('  Using Non-Local Means (smoothing=%.4f)\n', DegreeOfSmoothing);
         denoised = imnlmfilt(img, 'DegreeOfSmoothing', DegreeOfSmoothing);
+        
+        % Add detail restoration to preserve edges and textures
+        % Unsharp masking with strong emphasis on edges
+        blurred = imgaussfilt(denoised, 0.8);
+        detailLayer = denoised - blurred;
+        sharpenAmount = 0.55;  % 55% detail restoration for pronounced outlines
+        denoised = denoised + sharpenAmount * detailLayer;
+        denoised = max(0, min(1, denoised));
+        fprintf('  Applied detail restoration (%.0f%%)\n', sharpenAmount * 100);
+        
     elseif exist('imbilatfilt', 'file')
         % Bilateral filter: scale with noise level
         fprintf('  Using bilateral filter\n');
-        intensitySigma = min(noiseStd * 1.5, 0.12);
-        spatialSigma = min(1.5 + noiseStd * 8, 3.0);  % Adaptive spatial range
+        intensitySigma = min(noiseStd * 1.2, 0.08);  % Reduced from 1.5 and 0.12
+        spatialSigma = min(1.2 + noiseStd * 6, 2.5);  % Reduced spatial range
         fprintf('  Bilateral params: intensity=%.4f, spatial=%.2f\n', intensitySigma, spatialSigma);
         denoised = imbilatfilt(img, intensitySigma, spatialSigma);
+        
+        % Detail restoration for bilateral too
+        blurred = imgaussfilt(denoised, 0.8);
+        detailLayer = denoised - blurred;
+        denoised = denoised + 0.55 * detailLayer;
+        denoised = max(0, min(1, denoised));
+        fprintf('  Applied detail restoration\n');
     else
         % Gentle Gaussian - single pass to preserve details
         fprintf('  Using gentle Gaussian filtering\n');
-        sigma = max(0.9, min(noiseStd * 18, 2.0));
+        sigma = max(0.7, min(noiseStd * 12, 1.5));  % Reduced from 18 and 2.0
         kernelSize = 2 * ceil(2 * sigma) + 1;
         
         h = fspecial('gaussian', [kernelSize kernelSize], sigma);
